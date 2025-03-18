@@ -142,6 +142,10 @@ def train_models(X_train, y_train, X_test, X_test_filtered, models, PCA_flag, ra
         Features for testing, filtered to match X_train. This is only changed 
         through this function if PCA_flag is set to true, because the same 
         transformation applied to the train set must be applied to the test set.  
+    full_feature_set_no_PCA_transform : DataFrame
+        Full feature set with the transformation from the scaler for the train
+        set applied, but without the PCA transformation applied. This is for
+        forward model calculation.
 
     """
     # set up result storage structure 
@@ -159,6 +163,7 @@ def train_models(X_train, y_train, X_test, X_test_filtered, models, PCA_flag, ra
     X_test = pd.DataFrame(scaler.transform(X_test), index = X_test.index, columns = X_test.columns)
     X_test_filtered = pd.DataFrame(scaler.transform(X_test_filtered), index = X_test_filtered.index, columns = X_test_filtered.columns)
     full_feature_set = pd.DataFrame(scaler.transform(full_feature_set), index = full_feature_set.index, columns = full_feature_set.columns)
+    full_feature_set_no_PCA_transform = pd.DataFrame(scaler.transform(full_feature_set), index = full_feature_set.index, columns = full_feature_set.columns)
     
     PCA_threshold = threshold # threshold for % variance to retain after PCA
     
@@ -217,7 +222,7 @@ def train_models(X_train, y_train, X_test, X_test_filtered, models, PCA_flag, ra
         filtered_results[model_name]["y_scores"] = y_scores_filtered
     
             
-    return models, results, X_test, full_feature_set, filtered_results, X_test_filtered
+    return models, results, X_test, full_feature_set, filtered_results, X_test_filtered, full_feature_set_no_PCA_transform
 
 def get_AUROC(y_test, self_report_models, mw_onset_models, mw_onset_2_models, test_results):
     """
@@ -1063,8 +1068,9 @@ def get_raw_scores(mw_models, sr_models, mw_2_models, X_mw, X_mw2, X_sr, mw2_tar
 
     
 
-def plot_forward_feature_importance(raw_scores, window_size, X, full_set_relative_times,
-                                    true_labels_full_set, no_mw2_flag, mw2_target):
+def plot_forward_feature_importance(raw_scores, window_size, X_mw, X_mw2, X_sr,
+                                    full_set_relative_times, true_labels_full_set,
+                                    no_mw2_flag, mw2_target):
     """
     Calculate and plot forward model feature importance for each linear model,
     for each model type (mw_onset vs. control or self report vs. control). Creates
@@ -1080,8 +1086,15 @@ def plot_forward_feature_importance(raw_scores, window_size, X, full_set_relativ
         keys are mw_onset_raw_scores and self_report_raw_scores. 
     window_size : Int.
         The size of the sliding window for the data currently being processed.
-    X : DataFrame.
-        Features for the full dataset, no PCA transform applied.
+    X_mw : DataFrame.
+        Features for the full dataset, no PCA transform applied. The same scaler
+        for the mw_onset vs. control classifier was applied to this.
+    X_mw2 : DataFrame.
+        Features for the full dataset, no PCA transform applied. The same scaler
+        for the mw_onset_2 vs. control classifier was applied to this.  
+    X_sr : DataFrame.
+        Features for the full dataset, no PCA transform applied. The same scaler
+        for the self_report vs. control classifier was applied to this.
     full_set_relative_times : Series
         Relative times for the full dataset, with index matching X.
     true_labels_full_set : Series
@@ -1099,27 +1112,28 @@ def plot_forward_feature_importance(raw_scores, window_size, X, full_set_relativ
     """
     
     # concat X with times and labels for filtering
-    X_combined = pd.concat([X, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
+    X_mw_combined = pd.concat([X_mw, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
+    if no_mw2_flag == False:
+        X_mw2_combined = pd.concat([X_mw2, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
+    X_sr_combined = pd.concat([X_sr, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
 
     # filter for mw
-    X_mw = X_combined[
-        ((X_combined["label"] == 0) & (X_combined["relative_time"] == 0)) |
-        ((X_combined["label"] == 1) * (X_combined["relative_time"] == 0))
+    X_mw = X_mw_combined[
+        ((X_mw_combined["label"] == 0) & (X_mw_combined["relative_time"] == 0)) |
+        ((X_mw_combined["label"] == 1) * (X_mw_combined["relative_time"] == 0))
         ]
     # filter for mw2
     if no_mw2_flag == False:
-        X_mw2 = X_combined[
-            ((X_combined["label"] == 0) & (X_combined["relative_time"] == mw2_target)) |
-            ((X_combined["label"] == 1) * (X_combined["relative_time"] == mw2_target))
+        X_mw2 = X_mw2_combined[
+            ((X_mw2_combined["label"] == 0) & (X_mw2_combined["relative_time"] == mw2_target)) |
+            ((X_mw2_combined["label"] == 1) * (X_mw2_combined["relative_time"] == mw2_target))
             ]
     # filter for sr
-    X_sr = X_combined[
-        ((X_combined["label"] == 0) & (X_combined["relative_time"] == (-.5 * window_size))) |
-        ((X_combined["label"] == 2) * (X_combined["relative_time"] == (-.5 * window_size)))
+    X_sr = X_sr_combined[
+        ((X_sr_combined["label"] == 0) & (X_sr_combined["relative_time"] == (-.5 * window_size))) |
+        ((X_sr_combined["label"] == 2) * (X_sr_combined["relative_time"] == (-.5 * window_size)))
         ]
     
-    # get columns
-    columns = X.columns
     
     # drop relative time and label from each filtered dataset
     X_mw = X_mw.copy()
@@ -1129,6 +1143,10 @@ def plot_forward_feature_importance(raw_scores, window_size, X, full_set_relativ
     if no_mw2_flag == False:
         X_mw2 = X_mw2.copy()
         X_mw2.drop(columns = ["label", "relative_time"], inplace=True)
+        
+    # get columns - they're the same for each set so choose any
+    columns = X_mw.columns
+    
     # calculate forward model feature importance and plot for each linear model, for each model type
     # one plot for each model feature importance with subplots for mw onset and sr model types
     
@@ -1316,8 +1334,8 @@ SMOTE_flag = True # set to True to use SMOTE (synthetic minority over-sampling t
 undersample_flag = False # set to True to use undersampling to achieve more balanced class dist. 
 PCA_flag = True
 PCA_threshold = .9 # for PCA
-no_mw2_flag = False # set to true to prevent plotting of the MW_onset vs control classifier trained on relative time != 0
-mw2_target = 2 # set to target time for the second mw_onset vs. control classifier. currently only supports one time at a time
+no_mw2_flag = True # set to true to prevent plotting of the MW_onset vs control classifier trained on relative time != 0
+mw2_target = 5 # set to target time for the second mw_onset vs. control classifier. currently only supports one time at a time
 
 # DO NOT SET BOTH UNDERSAMPLE_FLAG AND SMOTE_FLAG TO TRUE AT THE SAME TIME THAT WOULD BE WEIRD/ ERROR WILL BE THROWN
 
@@ -1729,7 +1747,7 @@ if undersample_flag:
 X_train_self_report.reset_index(inplace=True, drop=True)
 y_train_self_report = y_train_self_report.reset_index(drop=True)
 
-self_report_models, self_report_results, X_test_sr, X_sr, self_report_filtered_results, X_test_filtered_self_report = train_models(X_train_self_report, 
+self_report_models, self_report_results, X_test_sr, X_sr, self_report_filtered_results, X_test_filtered_self_report, X_sr_no_PCA = train_models(X_train_self_report, 
                                                                                                       y_train_self_report,
                                                                                                       X_test, X_test_filtered_self_report,
                                                                                                       self_report_models, PCA_flag,
@@ -1738,7 +1756,7 @@ self_report_models, self_report_results, X_test_sr, X_sr, self_report_filtered_r
 # train MW_onset vs. control 
 X_train_MW_onset.reset_index(inplace=True, drop=True)
 y_train_MW_onset = y_train_MW_onset.reset_index(drop=True)
-MW_onset_models, MW_onset_results, X_test_mw, X_mw, MW_onset_filtered_results, X_test_filtered_MW_onset = train_models(X_train_MW_onset,
+MW_onset_models, MW_onset_results, X_test_mw, X_mw, MW_onset_filtered_results, X_test_filtered_MW_onset, X_mw_no_PCA = train_models(X_train_MW_onset,
                                                                                              y_train_MW_onset, X_test,
                                                                                              X_test_filtered_MW_onset,
                                                                                              MW_onset_models, PCA_flag,
@@ -1747,7 +1765,7 @@ MW_onset_models, MW_onset_results, X_test_mw, X_mw, MW_onset_filtered_results, X
 # train MW_onset_2 vs control
 X_train_MW_onset_2.reset_index(inplace=True, drop=True)
 y_train_MW_onset_2 = y_train_MW_onset_2.reset_index(drop=True)
-MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2 = train_models(X_train_MW_onset_2,
+MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2, X_mw2_no_PCA = train_models(X_train_MW_onset_2,
                                                                                                      y_train_MW_onset_2, X_test,
                                                                                                      X_test_filtered_MW_onset_2,
                                                                                                      MW_onset_2_models, PCA_flag,
@@ -1864,7 +1882,8 @@ plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_
 feat_importance_raw_scores = get_raw_scores(MW_onset_models, self_report_models, MW_onset_2_models, 
                                             X_mw, X_mw2, X_sr, mw2_target, full_set_relative_times,
                                             true_labels_full_set, window_size, feature_importance_flag = True)
-plot_forward_feature_importance(feat_importance_raw_scores, window_size, X, full_set_relative_times, 
+plot_forward_feature_importance(feat_importance_raw_scores, window_size, X_mw_no_PCA,
+                                X_mw2_no_PCA, X_sr_no_PCA, full_set_relative_times,
                                 true_labels_full_set, no_mw2_flag, mw2_target)
 
 # plot predictor hists 
