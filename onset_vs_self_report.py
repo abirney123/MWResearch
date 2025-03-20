@@ -1332,9 +1332,9 @@ window_size = 5 # options are two and five. 2 has less imbalance
 random_state = 42 # shouldn't need to change this
 SMOTE_flag = True # set to True to use SMOTE (synthetic minority over-sampling technique) to achieve more balanced class dist.
 undersample_flag = False # set to True to use undersampling to achieve more balanced class dist. 
-PCA_flag = True
+PCA_flag = False
 PCA_threshold = .9 # for PCA
-no_mw2_flag = True # set to true to prevent plotting of the MW_onset vs control classifier trained on relative time != 0
+no_mw2_flag = False # set to true to prevent plotting of the MW_onset vs control classifier trained on relative time != 0
 mw2_target = 5 # set to target time for the second mw_onset vs. control classifier. currently only supports one time at a time
 
 # DO NOT SET BOTH UNDERSAMPLE_FLAG AND SMOTE_FLAG TO TRUE AT THE SAME TIME THAT WOULD BE WEIRD/ ERROR WILL BE THROWN
@@ -1357,18 +1357,30 @@ print("length of full data after dropping offset", len(data))
 # handle missing values - drop horizontal_sacc then drop the nas
 data.drop(columns="horizontal_sacc", inplace=True)
 
+# try dropping blink num, blink dur, and blink freq too to retain more data
+data.drop(columns=["blink_num", "blink_dur", "blink_freq"], inplace=True)
+
 
 # feature extraction - create X and y for splitting
 # labels is included in features at this stage, but dropped later (same with page)
 
-
+"""
 features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
             "norm_out_word_reg", "zscored_zipf_fixdur_corr", "zipf_fixdur_corr",
             "zscored_word_length_fixdur_corr","norm_total_viewing", "fix_dispersion",
             "weighted_vergence","blink_num", "blink_dur", "blink_freq", "norm_sacc_num",
             "sacc_length","norm_pupil", "page", "relative_time"]
+"""
+features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
+            "norm_out_word_reg", "zscored_zipf_fixdur_corr", "zipf_fixdur_corr",
+            "zscored_word_length_fixdur_corr","norm_total_viewing", "fix_dispersion",
+            "weighted_vergence", "norm_sacc_num",
+            "sacc_length","norm_pupil", "page", "relative_time"]
+
 
 data.dropna(subset = features, inplace=True)
+
+
 
 print(data["label"].unique())
 
