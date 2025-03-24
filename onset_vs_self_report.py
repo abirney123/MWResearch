@@ -59,6 +59,11 @@ and using SMOTE with auto sampling strategy.
 3/10 Note: Optimal hyperparameters have been found through grid search and 
 used here. Search was performed with SMOTE and PCA retaining 90% of variance.
         
+3/24 Note: Re-ran grid search, looking for optimal values for PCA and SMOTE as well.
+* More often than not, grid search shows models perform better without SMOTE. However.
+not using it results in failure to converge for some models and much lower F1.
+* PCA on/ off and thresholds are currently tuned to be optimal for the 5s window
+
 """
 import pandas as pd
 import numpy as np
@@ -1328,108 +1333,43 @@ def predictor_hist(raw_scores, true_labels_full_set, classifier_type, window_siz
 #%%
     
 
-window_size = 5 # options are two and five. 2 has less imbalance
+window_size = 5 # options are two and five. 2 has less imbalance, hp sweep has not been done on 2. Focusing on 5. Changes needed to PCA flag
+# and threshold if reverting to 2 (to make optimal)
+
+PCA_flag_self_report = False
+PCA_threshold_self_report = None
+PCA_flag_MW_onset = True
+PCA_threshold_MW_onset = .9
+PCA_flag_MW_onset_2 = True
+PCA_threshold_MW_onset_2 = .95
+PCA_flag_MW_onset_5 = True
+PCA_threshold_MW_onset_5 = .95
+
 random_state = 42 # shouldn't need to change this
 SMOTE_flag = True # set to True to use SMOTE (synthetic minority over-sampling technique) to achieve more balanced class dist.
 undersample_flag = False # set to True to use undersampling to achieve more balanced class dist. 
-PCA_flag = False
-PCA_threshold = .9 # for PCA
+#PCA_flag = True
+#PCA_threshold = .9 # for PCA
+# optimal PCA_flag and threshold is model specific
 no_mw2_flag = False # set to true to prevent plotting of the MW_onset vs control classifier trained on relative time != 0
-mw2_target = 5 # set to target time for the second mw_onset vs. control classifier. currently only supports one time at a time
+mw2_target = 5 # set to target time for the second mw_onset vs. control classifier. currently only supports 2 or 5. other times could be supported 
+# easily but would need to find new optimal hyperparams or set a condition to use default if not 2 or 5
 
 # DO NOT SET BOTH UNDERSAMPLE_FLAG AND SMOTE_FLAG TO TRUE AT THE SAME TIME THAT WOULD BE WEIRD/ ERROR WILL BE THROWN
+assert window_size == 5, "Warning: Settings show window_size 2 is being targeted. PCA hasn't been optimized for this window size."
 
 assert not (SMOTE_flag == True and undersample_flag == True), "Error: cannot use SMOTE and undersampling at the same time this way. Change one to False or adapt the pipeline."
     
 
 # load data
-filepath = f"group_R_features_slide_wlen{window_size}.csv"
-data = pd.read_csv(filepath,index_col=0)
 
-print("length of full data before dropping offset", len(data))
-# drop rows where event is mw_offset now so changes are reflected in entire dataset
-data = data[data["label"] != "MW_offset"]
-print("length of full data after dropping offset", len(data))
-#print(data.isna().sum())
-
-
-
-# handle missing values - drop horizontal_sacc then drop the nas
-data.drop(columns="horizontal_sacc", inplace=True)
-
-# try dropping blink num, blink dur, and blink freq too to retain more data
-data.drop(columns=["blink_num", "blink_dur", "blink_freq"], inplace=True)
-
-
-# feature extraction - create X and y for splitting
-# labels is included in features at this stage, but dropped later (same with page)
-
-"""
-features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
-            "norm_out_word_reg", "zscored_zipf_fixdur_corr", "zipf_fixdur_corr",
-            "zscored_word_length_fixdur_corr","norm_total_viewing", "fix_dispersion",
-            "weighted_vergence","blink_num", "blink_dur", "blink_freq", "norm_sacc_num",
-            "sacc_length","norm_pupil", "page", "relative_time"]
-"""
-features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
-            "norm_out_word_reg", "zscored_zipf_fixdur_corr", "zipf_fixdur_corr",
-            "zscored_word_length_fixdur_corr","norm_total_viewing", "fix_dispersion",
-            "weighted_vergence", "norm_sacc_num",
-            "sacc_length","norm_pupil", "page", "relative_time"]
-
-
-data.dropna(subset = features, inplace=True)
-
-
-
-print(data["label"].unique())
-
-# sanity check for num trials calculations
-trial_calc = data.copy()
-
-sr_trial_calc = trial_calc[trial_calc["label"] == "self_report"]
-mw_trial_calc = trial_calc[trial_calc["label"] == "MW_onset"]
-ctl_trial_calc = trial_calc[(trial_calc["label"] == "control") | (trial_calc["label"] == "MW_offset")]
-
-sr_trial_calc = sr_trial_calc.copy()
-sr_trial_calc["time_diff"] = sr_trial_calc["relative_time"].diff()
-sr_trial_calc["new_trial"] = sr_trial_calc["time_diff"].abs() > .25
-
-mw_trial_calc = mw_trial_calc.copy()
-mw_trial_calc["time_diff"] = mw_trial_calc["relative_time"].diff()
-mw_trial_calc["new_trial"] = mw_trial_calc["time_diff"].abs() > .25
-
-ctl_trial_calc = ctl_trial_calc.copy()
-ctl_trial_calc["time_diff"] = ctl_trial_calc["relative_time"].diff()
-ctl_trial_calc["new_trial"] = ctl_trial_calc["time_diff"].abs() > .25
-
-
-sr_trials = sr_trial_calc["new_trial"].sum() + 1 # add one for first trial
-print(sr_trials, " sr trials")
-
-mw_trials = mw_trial_calc["new_trial"].sum() + 1 # add one for first trial
-print(mw_trials, " mw trials")
-
-ctl_trials = ctl_trial_calc["new_trial"].sum() + 1 # add one for first trial
-print(ctl_trials, " ctl trials")
-
-trial_calc["time_diff"] = trial_calc["relative_time"].diff()
-trial_calc["new_trial"] = trial_calc["time_diff"].abs() > .25
-num_trials = trial_calc["new_trial"].sum() + 1
-print(num_trials, " total trials")
-
-#print(data["label"].unique())
-
-
-
-X = data[features]
-
-
-            
-y = data["label"] # labels are not binary at this stage
-# train test split to get train and holdout sets, keeping label in features for now, will drop after
-# setting up for mw onset and self report
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = .2, random_state = random_state)
+# to do: load in train and test
+X_train = pd.read_csv(f"X_train_wlen{window_size}", index_col=0)
+y_train = pd.read_csv(f"y_train_wlen{window_size}", index_col=0).squeeze("columns")
+X_test = pd.read_csv(f"X_test_wlen{window_size}", index_col=0)
+y_test = pd.read_csv(f"y_test_wlen{window_size}", index_col=0).squeeze("columns")
+X = pd.read_csv(f"X_wlen{window_size}", index_col = 0)
+y = pd.read_csv(f"y_wlen{window_size}", index_col = 0).squeeze("columns")
 
 
 # from train set, filter out the following - leave the test set untouched
@@ -1476,48 +1416,51 @@ y_test_filtered = y_test.loc[X_test_filtered.index]
 
 X_train_MW_onset = X_train[(X_train["label"] != "self_report") & (X_train["relative_time"] == 0)]
 X_train_MW_onset = X_train_MW_onset.copy()
-X_train_MW_onset.drop(columns=["label", "page", "relative_time"], inplace=True)
+X_train_MW_onset = X_train_MW_onset.drop(columns=["label", "page", "relative_time"])
 
 X_test_filtered_MW_onset = X_test_filtered[(X_test_filtered["label"] != "self_report") & (X_test_filtered["relative_time"] == 0)]
 X_test_filtered_MW_onset = X_test_filtered_MW_onset.copy()
-X_test_filtered_MW_onset.drop(columns=["label", "page", "relative_time"], inplace=True)
+X_test_filtered_MW_onset = X_test_filtered_MW_onset.drop(columns=["label", "page", "relative_time"])
 
 # create X_train_MW_onset_2
 X_train_MW_onset_2 = X_train[(X_train["label"] != "self_report") & (X_train["relative_time"] == mw2_target)]
 X_train_MW_onset_2 = X_train_MW_onset_2.copy()
-X_train_MW_onset_2.drop(columns=["label", "page", "relative_time"], inplace=True)
+X_train_MW_onset_2 = X_train_MW_onset_2.drop(columns=["label", "page", "relative_time"])
 
 X_test_filtered_MW_onset_2 = X_test_filtered[(X_test_filtered["label"] != "self_report") & (X_test_filtered["relative_time"] == mw2_target)]
 X_test_filtered_MW_onset_2 = X_test_filtered_MW_onset_2.copy()
-X_test_filtered_MW_onset_2.drop(columns=["label", "page", "relative_time"], inplace=True)
+X_test_filtered_MW_onset_2 = X_test_filtered_MW_onset_2.drop(columns=["label", "page", "relative_time"])
 
 # create X_train_self_report: drop rows where label = mw onset (retain self report and control), then drop label & page
 X_train_self_report = X_train[(X_train["label"] != "MW_onset") & (X_train["relative_time"] == (-.5 * window_size))]
 X_train_self_report = X_train_self_report.copy()
-X_train_self_report.drop(columns=["label", "page", "relative_time"], inplace=True) 
+X_train_self_report = X_train_self_report.drop(columns=["label", "page", "relative_time"]) 
 
 X_test_filtered_self_report = X_test_filtered[(X_test_filtered["label"] != "MW_onset") & (X_test_filtered["relative_time"] == (-.5 * window_size))]
 X_test_filtered_self_report = X_test_filtered_self_report.copy()
-X_test_filtered_self_report.drop(columns=["label", "page", "relative_time"], inplace=True)
+X_test_filtered_self_report = X_test_filtered_self_report.drop(columns=["label", "page", "relative_time"])
 
 # drop relative time from X_train and X_test now
 X_train_relative_times = X_train["relative_time"].copy()
-X_train.drop(columns=["relative_time"], inplace=True)
+X_train = X_train.drop(columns=["relative_time"])
 X_test_relative_times = X_test["relative_time"].copy()
 #X_test_relative_times.reset_index(inplace=True, drop=True)
-X_test.drop(columns=["relative_time"], inplace=True)
+X_test = X_test.drop(columns=["relative_time"])
 X_test_filtered_relative_times = X_test_filtered["relative_time"].copy() # now we have relative times for X_test_filtered saved
 # each x_test specific to a classifier has been further narrowed down by relative time and label
+X_test_filtered = X_test_filtered.drop(columns=["relative_time"])
 
 
 
 
 # drop labels from X_test
-X_test.drop(columns=["label", "page"], inplace=True)
+X_test = X_test.drop(columns=["label", "page"])
 
 # drop pages and labels from X_train. X_train isn't used again aside from fitting the scaler for the holdout set
 # but we need to do this to make that work. relative time has already been dropped
-X_train.drop(columns=["label", "page"], inplace=True)
+X_train = X_train.drop(columns=["label", "page"])
+
+X_test_filtered = X_test_filtered.drop(columns=["label", "page"])
 
 #correlation_matrix = X_train.corr(method='pearson')
 #correlation_matrix.to_csv("corr_matrix.csv") 
@@ -1587,7 +1530,7 @@ if full_set_relative_times.index.equals(true_labels_full_set.index):
 else:
     print("Indexes do not match (full set relative times and full set true labels).")
 
-# define models
+# define models with optimal hps
 if window_size == 2:
     self_report_models = {
             'Logistic Regression': LogisticRegression(random_state = random_state, C=10), 
@@ -1627,7 +1570,7 @@ if window_size == 2:
     
 if window_size == 5:
     self_report_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=10, solver="saga"), 
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=1, solver="lbfgs", penalty = "l2"), 
             'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
@@ -1639,8 +1582,8 @@ if window_size == 5:
         }
     
     MW_onset_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state),
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.001),
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="lbfgs"),
+            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
             #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=50),
@@ -1649,18 +1592,30 @@ if window_size == 5:
             #'Naive Bayes': GaussianNB(var_smoothing = .000000001),
             #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.001, max_depth=3, n_estimators=100, subsample=.5)
         }
-    
-    MW_onset_2_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state),
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.001),
-            #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-            'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
-            #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
-            'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
-            #'KNN': KNeighborsClassifier(),
-            #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
-            #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
-        }
+    if mw2_target == 2:
+        MW_onset_2_models = {
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
+                'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+                #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+                'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
+                #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
+                'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+                #'KNN': KNeighborsClassifier(),
+                #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
+                #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
+            }
+    elif mw2_target == 5:
+        MW_onset_2_models = {
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="lbfgs"),
+                'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+                #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+                'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
+                #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
+                'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+                #'KNN': KNeighborsClassifier(),
+                #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
+                #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
+            }
 
 # sanity checks
 #print(f"MW_Onset Features: {X_train_MW_onset.columns}")
@@ -1755,6 +1710,7 @@ if undersample_flag:
 
 
 #train self_report vs control
+# adjust pca flag and thresholds here if changes are needed
 # reset indices to ensure alignment
 X_train_self_report.reset_index(inplace=True, drop=True)
 y_train_self_report = y_train_self_report.reset_index(drop=True)
@@ -1762,8 +1718,8 @@ y_train_self_report = y_train_self_report.reset_index(drop=True)
 self_report_models, self_report_results, X_test_sr, X_sr, self_report_filtered_results, X_test_filtered_self_report, X_sr_no_PCA = train_models(X_train_self_report, 
                                                                                                       y_train_self_report,
                                                                                                       X_test, X_test_filtered_self_report,
-                                                                                                      self_report_models, PCA_flag,
-                                                                                                      random_state,PCA_threshold, X)
+                                                                                                      self_report_models, PCA_flag_self_report,
+                                                                                                      random_state,PCA_threshold_self_report, X)
         
 # train MW_onset vs. control 
 X_train_MW_onset.reset_index(inplace=True, drop=True)
@@ -1771,17 +1727,25 @@ y_train_MW_onset = y_train_MW_onset.reset_index(drop=True)
 MW_onset_models, MW_onset_results, X_test_mw, X_mw, MW_onset_filtered_results, X_test_filtered_MW_onset, X_mw_no_PCA = train_models(X_train_MW_onset,
                                                                                              y_train_MW_onset, X_test,
                                                                                              X_test_filtered_MW_onset,
-                                                                                             MW_onset_models, PCA_flag,
-                                                                                             random_state, PCA_threshold, X)
+                                                                                             MW_onset_models, PCA_flag_MW_onset,
+                                                                                             random_state, PCA_threshold_MW_onset, X)
     
 # train MW_onset_2 vs control
 X_train_MW_onset_2.reset_index(inplace=True, drop=True)
 y_train_MW_onset_2 = y_train_MW_onset_2.reset_index(drop=True)
-MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2, X_mw2_no_PCA = train_models(X_train_MW_onset_2,
-                                                                                                     y_train_MW_onset_2, X_test,
-                                                                                                     X_test_filtered_MW_onset_2,
-                                                                                                     MW_onset_2_models, PCA_flag,
-                                                                                                     random_state, PCA_threshold, X)
+
+if mw2_target == 2:
+    MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2, X_mw2_no_PCA = train_models(X_train_MW_onset_2,
+                                                                                                         y_train_MW_onset_2, X_test,
+                                                                                                         X_test_filtered_MW_onset_2,
+                                                                                                         MW_onset_2_models, PCA_flag_MW_onset_2,
+                                                                                                         random_state, PCA_threshold_MW_onset_2, X)
+elif mw2_target == 5:
+    MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2, X_mw2_no_PCA = train_models(X_train_MW_onset_2,
+                                                                                                         y_train_MW_onset_2, X_test,
+                                                                                                         X_test_filtered_MW_onset_2,
+                                                                                                         MW_onset_2_models, PCA_flag_MW_onset_5,
+                                                                                                         random_state, PCA_threshold_MW_onset_5, X)
 
 
 # evaluate self_report classifier on test/ holdout set
