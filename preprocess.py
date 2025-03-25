@@ -18,16 +18,32 @@ random_state = 42
 filepath = f"group_R_features_slide_wlen{window_size}.csv"
 data = pd.read_csv(filepath,index_col=0)
 
-print("length of full data before dropping offset", len(data))
+# trials calculations - pre dropping
+trial_calc = data.copy()
+
+# make time diff and new trial cols
+trial_calc["time_diff"] = trial_calc["relative_time"].diff()
+trial_calc["new_trial"] = (trial_calc["time_diff"].isna()) | (trial_calc["time_diff"].abs() > .25)
+# make ID col
+trial_calc["trial_id"] = trial_calc["new_trial"].cumsum()
+
+
+
+# drop same rows from trial_calc as data, we have unique ID to serve as way to ID trials now
+
+
+#print("length of full data before dropping offset", len(data))
 # drop rows where event is mw_offset now so changes are reflected in entire dataset
 data = data[data["label"] != "MW_offset"]
-print("length of full data after dropping offset", len(data))
+trial_calc = trial_calc[trial_calc["label"] != "MW_offset"]
+#print("length of full data after dropping offset", len(data))
 #print(data.isna().sum())
 
 
 
 # handle missing values - drop horizontal_sacc then drop the nas
 data.drop(columns=["horizontal_sacc", "blink_num", "blink_dur", "blink_freq"], inplace=True)
+trial_calc.drop(columns=["horizontal_sacc", "blink_num", "blink_dur", "blink_freq"], inplace=True)
 
 
 
@@ -43,17 +59,51 @@ features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
 
 
 data.dropna(subset = features, inplace=True)
+trial_calc.dropna(subset = features, inplace=True)
 
 
 
 print(data["label"].unique())
 
-# sanity check for num trials calculations in full dataset
-trial_calc = data.copy()
+"""
+- don't count trials where all corresponding rows were dropped - have trial ID then 
+count unique ID after dropping (segment into different sets for each event first
+                                to have counts of trials for each)
+- save num trials to a csv so I can load into onset v self report instead of recalculating
+"""
 
+
+
+sr_trials = trial_calc[trial_calc["label"] == "self_report"]
+mw_trials = trial_calc[trial_calc["label"] == "MW_onset"]
+ctl_trials = trial_calc[trial_calc["label"] == "control"]
+
+sr_trial_count = sr_trials["trial_id"].nunique()
+mw_trial_count = mw_trials["trial_id"].nunique()
+ctl_trial_count = ctl_trials["trial_id"].nunique()
+
+
+print(sr_trial_count, " sr trials")
+print(mw_trial_count, " mw trials")
+print(ctl_trial_count, " ctl trials")
+
+trial_count_df = pd.DataFrame({
+    "MW_trials": [mw_trial_count],
+    "sr_trials": [sr_trial_count],
+    "ctl_trials": [ctl_trial_count]
+    })
+
+#pd.set_option("display.max_columns", None)
+#trial_calc.head()
+# for each of these groups, indicate new trial when 
+
+
+"""
+# old, broken. This strategy doesn't account for rows dropped due to 
+# missing values
 sr_trial_calc = trial_calc[trial_calc["label"] == "self_report"]
 mw_trial_calc = trial_calc[trial_calc["label"] == "MW_onset"]
-ctl_trial_calc = trial_calc[(trial_calc["label"] == "control") | (trial_calc["label"] == "MW_offset")]
+ctl_trial_calc = trial_calc[(trial_calc["label"] == "control")]
 
 sr_trial_calc = sr_trial_calc.copy()
 sr_trial_calc["time_diff"] = sr_trial_calc["relative_time"].diff()
@@ -81,6 +131,7 @@ trial_calc["time_diff"] = trial_calc["relative_time"].diff()
 trial_calc["new_trial"] = trial_calc["time_diff"].abs() > .25
 num_trials = trial_calc["new_trial"].sum() + 1
 print(num_trials, " total trials")
+"""
 
 #print(data["label"].unique())
 
@@ -94,11 +145,12 @@ y = data["label"] # labels are not binary at this stage
 # setting up for mw onset and self report
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = .2, random_state = random_state)
 
-X_train.to_csv(f"X_train_wlen{window_size}")
-X_test.to_csv(f"X_test_wlen{window_size}")
-y_train.to_csv(f"y_train_wlen{window_size}")
-y_test.to_csv(f"y_test_wlen{window_size}")
-X.to_csv(f"X_wlen{window_size}")
-y.to_csv(f"y_wlen{window_size}")
+X_train.to_csv(f"X_train_wlen{window_size}.csv")
+X_test.to_csv(f"X_test_wlen{window_size}.csv")
+y_train.to_csv(f"y_train_wlen{window_size}.csv")
+y_test.to_csv(f"y_test_wlen{window_size}.csv")
+X.to_csv(f"X_wlen{window_size}.csv")
+y.to_csv(f"y_wlen{window_size}.csv")
+trial_count_df.to_csv(f"trial_counts_wlen{window_size}.csv")
 
 

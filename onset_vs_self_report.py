@@ -746,7 +746,7 @@ def plot_probs(test_results, X_test_relative_times, true_labels_test_set, window
         plt.savefig(f"./onset_v_self_report/{window_size}s/{model_name}_probabilities")
         plt.show()
         
-def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_scores, no_mw2_flag, mw2_target):
+def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_scores, no_mw2_flag, mw2_target, trial_count_df):
     """
     Plot raw scores as a function of relative time. For each linear model type, a 
     figure will be created with three subplots: one to show raw scores of control 
@@ -817,22 +817,16 @@ def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, 
             # filter data based on plot type
             if plot_type == "MW_Onset":
                 subset = metadata[metadata["label"] == 1]
+                num_trials = trial_count_df["MW_trials"].iloc[0] # pull out the scalar
             elif plot_type == "self_report":
                 subset = metadata[metadata["label"] == 2]
+                num_trials = trial_count_df["sr_trials"].iloc[0]
             else: # control
                 subset = metadata[metadata["label"] == 0]
+                num_trials = trial_count_df["ctl_trials"].iloc[0]
                 
 
-            # get num trials - the number of distinct events. Each trial has relative_time
-            # from -5 to 5 (not all times present for all events)
-            # consider a new trial starting each time absolute val of difference in 
-            # susequent times is greater than .25
-            trial_calc_subset = subset.copy()
-            trial_calc_subset["time_diff"] = trial_calc_subset["relative_time"].diff()
-            trial_calc_subset["new_trial"] = trial_calc_subset["time_diff"].abs() > .25
-
-
-            num_trials = trial_calc_subset["new_trial"].sum() + 1 # add one for first trial
+            
             # sort by relative time so x-axis makes sense
             subset = subset.sort_values("relative_time")
 
@@ -1014,7 +1008,9 @@ def get_raw_scores(mw_models, sr_models, mw_2_models, X_mw, X_mw2, X_sr, mw2_tar
 
     # these raw scores can later be used for calculating feature importance or
     # for plotting different event behavior as fntn of relative time
-    linear_models = ["Support Vector Machine", "Logistic Regression", "Linear Discriminant Analysis"]
+    #linear_models = ["Support Vector Machine", "Logistic Regression", "Linear Discriminant Analysis"]
+    # focusing on logistic regression
+    linear_models = ["Logistic Regression"]
     # return nested dict, 1x level keys model names, 2nd mw_onset or self_report
     #for each linear model (mw and sr), calc forward model
     
@@ -1288,7 +1284,9 @@ def predictor_hist(raw_scores, true_labels_full_set, classifier_type, window_siz
         suptitle_addition = f"MW_onset {mw2_target} vs. Control"
         y = true_labels_full_set.apply(lambda x: 1 if x==1 else 0) # 1 if mw, else 0
 
-    fig, axes = plt.subplots(3,1,figsize=(15,15))
+    #fig, axes = plt.subplots(3,1,figsize=(15,15))
+    # one fig now - only focusing on logistic regression
+    fig, axes = plt.subplots(1,1, figsize=(15,15))
     fig.suptitle(f"Predictor Histograms, {window_size}s Sliding Window, {suptitle_addition}", fontsize=16)
     # flatten axes
     axes = np.array(axes).flatten()
@@ -1364,12 +1362,13 @@ assert not (SMOTE_flag == True and undersample_flag == True), "Error: cannot use
 # load data
 
 # to do: load in train and test
-X_train = pd.read_csv(f"X_train_wlen{window_size}", index_col=0)
-y_train = pd.read_csv(f"y_train_wlen{window_size}", index_col=0).squeeze("columns")
-X_test = pd.read_csv(f"X_test_wlen{window_size}", index_col=0)
-y_test = pd.read_csv(f"y_test_wlen{window_size}", index_col=0).squeeze("columns")
-X = pd.read_csv(f"X_wlen{window_size}", index_col = 0)
-y = pd.read_csv(f"y_wlen{window_size}", index_col = 0).squeeze("columns")
+X_train = pd.read_csv(f"X_train_wlen{window_size}.csv", index_col=0)
+y_train = pd.read_csv(f"y_train_wlen{window_size}.csv", index_col=0).squeeze("columns")
+X_test = pd.read_csv(f"X_test_wlen{window_size}.csv", index_col=0)
+y_test = pd.read_csv(f"y_test_wlen{window_size}.csv", index_col=0).squeeze("columns")
+X = pd.read_csv(f"X_wlen{window_size}.csv", index_col = 0)
+y = pd.read_csv(f"y_wlen{window_size}.csv", index_col = 0).squeeze("columns")
+trial_count_df = pd.read_csv(f"trial_counts_wlen{window_size}.csv")
 
 
 # from train set, filter out the following - leave the test set untouched
@@ -1534,11 +1533,11 @@ else:
 if window_size == 2:
     self_report_models = {
             'Logistic Regression': LogisticRegression(random_state = random_state, C=10), 
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.1), 
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.1), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-            'Random Forest': RandomForestClassifier(random_state = random_state, n_estimators = 200),
+           # 'Random Forest': RandomForestClassifier(random_state = random_state, n_estimators = 200),
             #'AdaBoost': AdaBoostClassifier(random_state = random_state),
-            'Linear Discriminant Analysis': LinearDiscriminantAnalysis(), 
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(), 
             #'KNN': KNeighborsClassifier(),
             #'Naive Bayes': GaussianNB(),
             #'XGBoost': XGBClassifier(random_state = random_state)
@@ -1546,11 +1545,11 @@ if window_size == 2:
     
     MW_onset_models = {
             'Logistic Regression': LogisticRegression(random_state = random_state, C=.01),
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10),
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-            'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 100),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 100),
             #'AdaBoost': AdaBoostClassifier(random_state = random_state),
-            'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
             #'KNN': KNeighborsClassifier(),
             #'Naive Bayes': GaussianNB(),
             #'XGBoost': XGBClassifier(random_state = random_state)
@@ -1558,11 +1557,11 @@ if window_size == 2:
     
     MW_onset_2_models = {
             'Logistic Regression': LogisticRegression(random_state = random_state, C=.00001),
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-            'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 10),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 10),
             #'AdaBoost': AdaBoostClassifier(random_state = random_state),
-            'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
             #'KNN': KNeighborsClassifier(),
             #'Naive Bayes': GaussianNB(),
             #'XGBoost': XGBClassifier(random_state = random_state)
@@ -1571,11 +1570,11 @@ if window_size == 2:
 if window_size == 5:
     self_report_models = {
             'Logistic Regression': LogisticRegression(random_state = random_state, C=1, solver="lbfgs", penalty = "l2"), 
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10), 
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-            'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
             #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME.R", learning_rate = .1, n_estimators = 100, ),
-            'Linear Discriminant Analysis': LinearDiscriminantAnalysis(), 
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(), 
             #'KNN': KNeighborsClassifier(),
             #'Naive Bayes': GaussianNB(var_smoothing = .000000001),
             #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=.5, learning_rate = .001, max_depth = 3, n_estimators = 200, subsample=.5)
@@ -1583,11 +1582,11 @@ if window_size == 5:
     
     MW_onset_models = {
             'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="lbfgs"),
-            'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-            'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
             #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=50),
-            'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
             #'KNN': KNeighborsClassifier(),
             #'Naive Bayes': GaussianNB(var_smoothing = .000000001),
             #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.001, max_depth=3, n_estimators=100, subsample=.5)
@@ -1595,11 +1594,11 @@ if window_size == 5:
     if mw2_target == 2:
         MW_onset_2_models = {
                 'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
-                'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+                #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-                'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
+                #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
                 #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
-                'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+                #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
                 #'KNN': KNeighborsClassifier(),
                 #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
                 #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
@@ -1607,11 +1606,11 @@ if window_size == 5:
     elif mw2_target == 5:
         MW_onset_2_models = {
                 'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="lbfgs"),
-                'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+                #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
-                'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
+                #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
                 #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
-                'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+                #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
                 #'KNN': KNeighborsClassifier(),
                 #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
                 #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
@@ -1850,7 +1849,7 @@ if PCA_flag == False:
 raw_scores = get_raw_scores(MW_onset_models, self_report_models, MW_onset_2_models,
                             X_mw, X_mw2, X_sr, mw2_target, full_set_relative_times,
                             true_labels_full_set, window_size, feature_importance_flag = False)
-plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_scores, no_mw2_flag, mw2_target)
+plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_scores, no_mw2_flag, mw2_target, trial_count_df)
 
 
 
