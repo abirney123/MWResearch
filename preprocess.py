@@ -12,7 +12,7 @@ an 80/ 20 train test split.
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-window_size = 2
+window_size = 5
 random_state = 42
 
 filepath = f"group_R_features_slide_wlen{window_size}.csv"
@@ -56,6 +56,14 @@ features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
             "zscored_word_length_fixdur_corr","norm_total_viewing", "fix_dispersion",
             "weighted_vergence", "norm_sacc_num",
             "sacc_length","norm_pupil", "page", "relative_time"]
+
+# keep subject id in X for LOGOCV
+
+X_features = ["fix_num","label", "norm_fix_word_num", "norm_in_word_reg",
+            "norm_out_word_reg", "zscored_zipf_fixdur_corr", "zipf_fixdur_corr",
+            "zscored_word_length_fixdur_corr","norm_total_viewing", "fix_dispersion",
+            "weighted_vergence", "norm_sacc_num",
+            "sacc_length","norm_pupil", "page", "relative_time", "sub_id"]
 
 
 data.dropna(subset = features, inplace=True)
@@ -137,13 +145,16 @@ print(num_trials, " total trials")
 
 
 
-X = data[features]
+X = data[X_features]
 
             
 y = data["label"] # labels are not binary at this stage
 # train test split to get train and holdout sets, keeping label in features for now, will drop after
 # setting up for mw onset and self report
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = .2, random_state = random_state)
+
+X_train = X_train.drop(columns = ["sub_id"])
+X_test = X_test.drop(columns = ["sub_id"])
 
 X_train.to_csv(f"X_train_wlen{window_size}.csv")
 X_test.to_csv(f"X_test_wlen{window_size}.csv")

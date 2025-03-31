@@ -78,7 +78,7 @@ from sklearn.naive_bayes import GaussianNB
 from xgboost import XGBClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.metrics import roc_auc_score, f1_score, roc_curve
 from matplotlib import pyplot as plt
 import seaborn as sns
 from imblearn.over_sampling import SMOTE 
@@ -228,6 +228,114 @@ def train_models(X_train, y_train, X_test, X_test_filtered, models, PCA_flag, ra
     
             
     return models, results, X_test, full_feature_set, filtered_results, X_test_filtered, full_feature_set_no_PCA_transform
+
+def train_models_cv(X_train, y_train, X_test, y_test, models, PCA_flag, random_state, threshold):
+    """
+    Train the provided models without cross validation. Reduces the train and test
+    sets with PCA according to the provided threshold if specified.
+    Similar to train_models, but doesn't handle X_test_filtered or full_feature_set. 
+    This is to simplify to support training during cross validation. All results are
+    from a "filtered" test set here due to the way the logocv splits work.
+
+    Parameters
+    ----------
+    X_train : DataFrame
+        Features for training.
+    y_train : Series
+        Labels for training.
+    X_test : DataFrame
+        Features for testing.
+    models : Dictionary
+        Models to train. Keys are model names.
+    PCA_flag : Boolean
+        Boolean value speciying whether or not to perform principal component
+        analysis for dimensionality reduction. Set to True to turn PCA on, False
+        to turn PCA off.
+    random_state: Int.
+        The random state used throughout the pipeline.
+    threshold: Float.
+        The threshold for percent variance to retain after PCA. For example, 
+        specify .9 to retain 90% of the variance in the data after dimensionality 
+        reduction.
+
+    Returns
+    -------
+    models : Dictionary
+        Trained models. Keys are model names.
+    results : Dictionary
+        Nested dictionary of test results. First level keys are model names 
+        as specified in the models dictionary. Second level keys are "y_scores"
+        and hold the y_scores for on the full, unfiltered test set for the model denoted by the
+        first level key.
+    X_test : DataFrame
+        Features for testing. This is only changed through this function if
+        PCA_flag is set to true, because the same transformation applied to the
+        train set must be applied to the test set.
+
+    """
+    # set up result storage structure 
+    results = {model_name:{
+        "y_scores" : None}for model_name in models.keys()}
+    
+    filtered_results = {model_name:{
+        "y_scores" : None}for model_name in models.keys()}
+    
+    # scale features 
+    scaler = StandardScaler()
+    #print("X_train cols: ", X_train.columns)
+    #print("X_test cols: ", X_test.columns)
+    X_train = pd.DataFrame(scaler.fit_transform(X_train), index=X_train.index, columns = X_train.columns)
+    X_test = pd.DataFrame(scaler.transform(X_test), index = X_test.index, columns = X_test.columns)
+
+    PCA_threshold = threshold # threshold for % variance to retain after PCA
+    
+    if PCA_flag:
+        """
+        # dimensionality reduction/ feature selection
+        # find top k components for this fold (explain ~x% of variance)
+        # train PCA on train set, transform test set
+        pca = PCA(random_state = random_state)
+        pca.fit(X_train) # just fitting, not transforming at this point because want to investigate how many components to keep
+        fold_variance_ratio = pca.explained_variance_ratio_
+        #print(variance_ratio)
+        threshold = PCA_threshold
+        cumsum = 0
+        rat_idx = 0 # index for variance ratio list
+        while cumsum < threshold:
+            cumsum += fold_variance_ratio[rat_idx]
+            rat_idx += 1
+        
+        print(f"{rat_idx} components explain {cumsum * 100: .2f}% of variance")
+        """
+        
+        # reduce data, saving indices
+        
+        # save indices
+        X_train_indices = X_train.index
+        X_test_indices = X_test.index
+
+        #num_components = rat_idx 
+        reduce_pca = PCA(n_components = PCA_threshold, random_state = random_state)
+        # fit transform train
+        X_train = pd.DataFrame(reduce_pca.fit_transform(X_train),index = X_train_indices)
+        # transform test
+        X_test = pd.DataFrame(reduce_pca.transform(X_test), index = X_test_indices)
+    
+    # compute y scores with test set scaled the same way as current train set 
+    for model_name, model in models.items():
+        model.fit(X_train, y_train)
+        # get y-scores
+        if hasattr(model, "predict_proba"):
+            y_scores = model.predict_proba(X_test)[:,1]
+        else:
+            print("LOGOCV: model doesn't have predict proba")
+            
+        # save the info
+        results[model_name]["y_scores"] = y_scores
+        results[model_name]["true_labels"] = y_test
+    
+            
+    return models, results
 
 def get_AUROC(y_test, self_report_models, mw_onset_models, mw_onset_2_models, test_results):
     """
@@ -1189,9 +1297,9 @@ def plot_forward_feature_importance(raw_scores, window_size, X_mw, X_mw2, X_sr,
             indices_mw2 = np.argsort(importances_mw2)[::-1] 
         
         if no_mw2_flag == False:
-            fig, axes = plt.subplots(3,1,figsize=(10,20))
+            fig, axes = plt.subplots(1,3,figsize=(20,10), sharey=True)
         else:
-            fig, axes = plt.subplots(2,1, figsize=(10,20))
+            fig, axes = plt.subplots(1,2, figsize=(20,10), sharey=True)
     
         # Plot feature importance
         # mw onset
@@ -1326,6 +1434,72 @@ def predictor_hist(raw_scores, true_labels_full_set, classifier_type, window_siz
         plt.savefig(f"onset_v_self_report/{window_size}s/Predictor_hist_{classifier_type}_mw{mw2_target}.png")
     else: # dont specify mw2 target if no mw2
         plt.savefig(f"onset_v_self_report/{window_size}s/Predictor_hist_{classifier_type}.png")
+        
+def run_LOGOCV(X, y, groups, models, classifier_type, window_size, random_state,
+               PCA_flag, PCA_thresh, smote_flag):
+    """
+    Input filtered X and y for the desired classifier type as well as the sub_id
+    column for that subset. Completes LOGOCV for this classifier type with
+    groups as subjects. 
+    
+    Although it appears that smote occurs outside of this pipeline, that's applied
+    to the train sets while logocv operates on the full datasets (subsets for
+    each classifier type) so it should be done again here.
+    """
+    # new logocv object for this classifier type
+    logo = LeaveOneGroupOut()
+    # initialize lists to store results
+    foldwise_results = []
+    
+    for fold, (train_idx, test_idx) in enumerate(logo.split(X, y, groups = groups)):
+        print(f" --- Fold {fold+1} ({classifier_type}) --- ")
+        X_train_fold, X_test_fold = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
+        y_train_fold, y_test_fold = y.iloc[train_idx].copy(), y.iloc[test_idx].copy()
+        
+        if smote_flag:
+            smote = SMOTE(random_state = random_state)
+            X_train_fold, y_train_fold = smote.fit_resample(X_train_fold, y_train_fold)
+            
+        # train - scaler applied within function
+        models, results = train_models_cv(X_train_fold, y_train_fold, X_test_fold, y_test_fold, 
+                                          models, PCA_flag, random_state, PCA_thresh)
+        
+        foldwise_results.append(results)
+        
+    return foldwise_results
+
+def plot_roc(foldwise_results, classifier_type):
+    # Plot ROC Curve
+    # code adapted from HS
+    
+    model_names = foldwise_results[0].keys()
+    print("Model names in foldwise results", model_names)
+    
+    # flatten foldwise results dictionary and concat to feed into roc curve function
+    
+    plt.figure(figsize = (12,12))
+    
+    for model_name in model_names: # loop through model names
+        all_y_scores = []
+        all_true_labels = []
+        
+        for fold in foldwise_results: # loop through folds to get y scores and y true
+            all_y_scores.extend(fold[model_name]["y_scores"])
+            all_true_labels.extend(fold[model_name]["true_labels"])
+            
+        fpr, tpr, _ = roc_curve(all_true_labels, all_y_scores)
+        plt.plot(fpr, tpr, label=f'{model_name} AUROC = {roc_auc_score(all_true_labels, all_y_scores):.2f})')
+        
+    plt.plot([0, 1], [0, 1], 'k--')  # Diagonal line
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.legend(loc="lower right")
+    plt.title(f"LOGOCV ROC Curve: {classifier_type}")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f"onset_v_self_report/{window_size}s/ROC_curve_{classifier_type}.png")
+    
+    
     
     
 #%%
@@ -1393,6 +1567,16 @@ X_test_filtered = X_test[
     ((X_test["label"] == "control") & (X_test["relative_time"] == mw2_target)) |
     ((X_test["label"] == "control") & (X_test["relative_time"] == (-.5 * window_size)))
     ]
+
+# filter x to support classifier specific x subsets for logocv
+X_filtered = X[
+    ((X["label"] == "control") & (X["relative_time"] ==0)) |
+    ((X["label"] == "self_report") & (X["relative_time"] == (-.5 * window_size))) |
+    ((X["label"] == "MW_onset") & (X["relative_time"] == 0)) |
+    ((X["label"] == "MW_onset") & (X["relative_time"] == mw2_target)) | # add condition for mw2_target
+    ((X["label"] == "control") & (X["relative_time"] == mw2_target)) |
+    ((X["label"] == "control") & (X["relative_time"] == (-.5 * window_size)))]
+
 # sanity checks.. should have all three label types and only 0 as relative time 
 # val for each group except self_report, which should have only -1 or -2.5 depending on window size.
 print("unique vals for label column:", X_train["label"].unique())
@@ -1405,6 +1589,9 @@ y_train = y_train.loc[X_train.index]
 # do the same for y test filtered
 y_test_filtered = y_test.loc[X_test_filtered.index]
 
+# do the same for y
+y_filtered = y.loc[X_filtered.index]
+
 
 # drop rel time from each train set after creating
 
@@ -1412,6 +1599,9 @@ y_test_filtered = y_test.loc[X_test_filtered.index]
 # then drop label & page. Also create groups for CV
 
 # do the same for the filtered x test sets
+
+# datasets of the form X_classifier type are un-split feature sets filtered for 
+# each specific classifier type for LOGOCV
 
 X_train_MW_onset = X_train[(X_train["label"] != "self_report") & (X_train["relative_time"] == 0)]
 X_train_MW_onset = X_train_MW_onset.copy()
@@ -1439,6 +1629,22 @@ X_test_filtered_self_report = X_test_filtered[(X_test_filtered["label"] != "MW_o
 X_test_filtered_self_report = X_test_filtered_self_report.copy()
 X_test_filtered_self_report = X_test_filtered_self_report.drop(columns=["label", "page", "relative_time"])
 
+# create classifier specific X subsets for LOGOCV
+X_MW_onset = X_filtered[(X_filtered["label"] != "self_report") & (X_filtered["relative_time"] == 0)]
+X_MW_onset = X_MW_onset.copy()
+X_MW_onset_groups = X_MW_onset["sub_id"]
+X_MW_onset = X_MW_onset.drop(columns=["label", "page", "relative_time", "sub_id"])
+
+X_MW_onset_2 = X_filtered[(X_filtered["label"] != "self_report") & (X_filtered["relative_time"] == mw2_target)]
+X_MW_onset_2 = X_MW_onset_2.copy()
+X_MW_onset_2_groups = X_MW_onset_2["sub_id"]
+X_MW_onset_2 = X_MW_onset_2.drop(columns=["label", "page", "relative_time", "sub_id"])
+
+X_self_report = X_filtered[(X_filtered["label"] != "MW_onset") & (X_filtered["relative_time"] == (-.5 * window_size))]
+X_self_report = X_self_report.copy()
+X_self_report_groups = X_self_report["sub_id"]
+X_self_report = X_self_report.drop(columns=["label", "page", "relative_time", "sub_id"]) 
+
 # drop relative time from X_train and X_test now
 X_train_relative_times = X_train["relative_time"].copy()
 X_train = X_train.drop(columns=["relative_time"])
@@ -1448,6 +1654,8 @@ X_test = X_test.drop(columns=["relative_time"])
 X_test_filtered_relative_times = X_test_filtered["relative_time"].copy() # now we have relative times for X_test_filtered saved
 # each x_test specific to a classifier has been further narrowed down by relative time and label
 X_test_filtered = X_test_filtered.drop(columns=["relative_time"])
+
+X_filtered_relative_times = X_filtered["relative_time"].copy()
 
 
 
@@ -1460,6 +1668,8 @@ X_test = X_test.drop(columns=["label", "page"])
 X_train = X_train.drop(columns=["label", "page"])
 
 X_test_filtered = X_test_filtered.drop(columns=["label", "page"])
+
+# don't use X_filtered again, no need to drop
 
 #correlation_matrix = X_train.corr(method='pearson')
 #correlation_matrix.to_csv("corr_matrix.csv") 
@@ -1479,6 +1689,9 @@ else:
     
 # at this stage there are only mw events for rel time 2 in y train
 
+# y sets of the form y_classifier type are un-split y sets filtered for each specific
+# classifier type for LOGOCV.
+
 
 # create y_train_MW_onset: 0 for control, 1 for MW_onset when rel time = 0. Rows where label = self_report dropped
 y_train_MW_onset = y_train[X_train_relative_times == 0]
@@ -1490,6 +1703,11 @@ y_test_filtered_MW_onset = y_test_filtered[X_test_filtered_relative_times == 0]
 y_test_filtered_MW_onset = y_test_filtered_MW_onset[y_test_filtered_MW_onset != "self_report"]
 y_test_filtered_MW_onset = y_test_filtered_MW_onset.apply(lambda x: 1 if x in ["MW_onset"] else 0)
 
+# same for full y
+y_MW_onset = y_filtered[X_filtered_relative_times == 0]
+y_MW_onset = y_MW_onset[y_MW_onset != "self_report"]
+y_MW_onset = y_MW_onset.apply(lambda x: 1 if x in ["MW_onset"] else 0)
+
 # create y_train_MW_onset_2: : 0 for control, 1 for MW_onset when rel time = 2. Rows where label = self_report dropped
 y_train_MW_onset_2 = y_train[X_train_relative_times == mw2_target]
 y_train_MW_onset_2 = y_train_MW_onset_2[y_train_MW_onset_2 != "self_report"]
@@ -1499,6 +1717,10 @@ y_test_filtered_MW_onset_2 = y_test_filtered[X_test_filtered_relative_times == m
 y_test_filtered_MW_onset_2 = y_test_filtered_MW_onset_2[y_test_filtered_MW_onset_2 != "self_report"]
 y_test_filtered_MW_onset_2 = y_test_filtered_MW_onset_2.apply(lambda x: 1 if x in ["MW_onset"] else 0)
 
+y_MW_onset_2 = y_filtered[X_filtered_relative_times == mw2_target]
+y_MW_onset_2 = y_MW_onset_2[y_MW_onset_2 != "self_report"]
+y_MW_onset_2 = y_MW_onset_2.apply(lambda x: 1 if x in ["MW_onset"] else 0)
+
 # create y_train_self_report: 0 for control, 1 for self_report. Rows where label = MW_onset dropped
 y_train_self_report = y_train[X_train_relative_times == (-.5 * window_size)]
 y_train_self_report = y_train_self_report[y_train_self_report != "MW_onset"]
@@ -1507,6 +1729,10 @@ y_train_self_report = y_train_self_report.apply(lambda x: 1 if x in ["self_repor
 y_test_filtered_self_report = y_test_filtered[X_test_filtered_relative_times == (-.5 * window_size)]
 y_test_filtered_self_report = y_test_filtered_self_report[y_test_filtered_self_report != "MW_onset"]
 y_test_filtered_self_report = y_test_filtered_self_report.apply(lambda x: 1 if x in ["self_report"] else 0)
+
+y_self_report = y_filtered[X_filtered_relative_times == (-.5 * window_size)]
+y_self_report = y_self_report[y_self_report != "MW_onset"]
+y_self_report = y_self_report.apply(lambda x: 1 if x in ["self_report"] else 0)
 
 # create a label set where all original labels are retained for plotting later
 # this is not to be used for any training or testing, just as a source of truth for plotting
@@ -1521,7 +1747,7 @@ y_test = y_test.apply(lambda x: 1 if x in ["MW_onset", "self_report"] else 0)
 # filter full dataset X so columns match train sets - drop label, page, relative_time after saving relative time separately
 full_set_relative_times = X["relative_time"]
 X = X.copy()
-X.drop(columns=["label", "page", "relative_time"], inplace=True)
+X.drop(columns=["label", "page", "relative_time", "sub_id"], inplace=True)
 
 
 if full_set_relative_times.index.equals(true_labels_full_set.index):
@@ -1605,6 +1831,91 @@ if window_size == 5:
             }
     elif mw2_target == 5:
         MW_onset_2_models = {
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="lbfgs"),
+                #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+                #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+                #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
+                #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
+                #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+                #'KNN': KNeighborsClassifier(),
+                #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
+                #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
+            }
+if window_size == 2:
+    self_report_cv_models = {
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=10), 
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.1), 
+            #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+           # 'Random Forest': RandomForestClassifier(random_state = random_state, n_estimators = 200),
+            #'AdaBoost': AdaBoostClassifier(random_state = random_state),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(), 
+            #'KNN': KNeighborsClassifier(),
+            #'Naive Bayes': GaussianNB(),
+            #'XGBoost': XGBClassifier(random_state = random_state)
+        }
+    
+    MW_onset_cv_models = {
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01),
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10),
+            #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 100),
+            #'AdaBoost': AdaBoostClassifier(random_state = random_state),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+            #'KNN': KNeighborsClassifier(),
+            #'Naive Bayes': GaussianNB(),
+            #'XGBoost': XGBClassifier(random_state = random_state)
+        }
+    
+    MW_onset_2_cv_models = {
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=.00001),
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+            #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 10),
+            #'AdaBoost': AdaBoostClassifier(random_state = random_state),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+            #'KNN': KNeighborsClassifier(),
+            #'Naive Bayes': GaussianNB(),
+            #'XGBoost': XGBClassifier(random_state = random_state)
+        }
+    
+if window_size == 5:
+    self_report_cv_models = {
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=1, solver="lbfgs", penalty = "l2"), 
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10), 
+            #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
+            #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME.R", learning_rate = .1, n_estimators = 100, ),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(), 
+            #'KNN': KNeighborsClassifier(),
+            #'Naive Bayes': GaussianNB(var_smoothing = .000000001),
+            #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=.5, learning_rate = .001, max_depth = 3, n_estimators = 200, subsample=.5)
+        }
+    
+    MW_onset_cv_models = {
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="lbfgs"),
+            #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+            #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+            #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
+            #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=50),
+            #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+            #'KNN': KNeighborsClassifier(),
+            #'Naive Bayes': GaussianNB(var_smoothing = .000000001),
+            #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.001, max_depth=3, n_estimators=100, subsample=.5)
+        }
+    if mw2_target == 2:
+        MW_onset_2_cv_models = {
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
+                #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
+                #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
+                #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
+                #'AdaBoost': AdaBoostClassifier(random_state = random_state, algorithm="SAMME", learning_rate=.1, n_estimators=100),
+                #'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+                #'KNN': KNeighborsClassifier(),
+                #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
+                #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
+            }
+    elif mw2_target == 5:
+        MW_onset_2_cv_models = {
                 'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="lbfgs"),
                 #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
@@ -1719,6 +2030,10 @@ self_report_models, self_report_results, X_test_sr, X_sr, self_report_filtered_r
                                                                                                       X_test, X_test_filtered_self_report,
                                                                                                       self_report_models, PCA_flag_self_report,
                                                                                                       random_state,PCA_threshold_self_report, X)
+# logocv 
+self_report_foldwise_results = run_LOGOCV(X_self_report, y_self_report, X_self_report_groups,
+                              self_report_cv_models, "self report", window_size,
+                              random_state, PCA_flag_self_report, PCA_threshold_self_report, smote_flag=True)
         
 # train MW_onset vs. control 
 X_train_MW_onset.reset_index(inplace=True, drop=True)
@@ -1729,6 +2044,10 @@ MW_onset_models, MW_onset_results, X_test_mw, X_mw, MW_onset_filtered_results, X
                                                                                              MW_onset_models, PCA_flag_MW_onset,
                                                                                              random_state, PCA_threshold_MW_onset, X)
     
+# logocv
+MW_onset_foldwise_results = run_LOGOCV(X_MW_onset, y_MW_onset, X_MW_onset_groups,
+                              MW_onset_cv_models, "MW Onset", window_size,
+                              random_state, PCA_flag_MW_onset, PCA_threshold_MW_onset, smote_flag=True)
 # train MW_onset_2 vs control
 X_train_MW_onset_2.reset_index(inplace=True, drop=True)
 y_train_MW_onset_2 = y_train_MW_onset_2.reset_index(drop=True)
@@ -1739,12 +2058,19 @@ if mw2_target == 2:
                                                                                                          X_test_filtered_MW_onset_2,
                                                                                                          MW_onset_2_models, PCA_flag_MW_onset_2,
                                                                                                          random_state, PCA_threshold_MW_onset_2, X)
+    # logocv
+    MW_onset_2_foldwise_results = run_LOGOCV(X_MW_onset_2, y_MW_onset_2, X_MW_onset_2_groups,
+                                  MW_onset_2_cv_models, "MW Onset 2", window_size,
+                                  random_state, PCA_flag_MW_onset_2, PCA_threshold_MW_onset_2, smote_flag=True)
 elif mw2_target == 5:
     MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2, X_mw2_no_PCA = train_models(X_train_MW_onset_2,
                                                                                                          y_train_MW_onset_2, X_test,
                                                                                                          X_test_filtered_MW_onset_2,
                                                                                                          MW_onset_2_models, PCA_flag_MW_onset_5,
                                                                                                          random_state, PCA_threshold_MW_onset_5, X)
+    MW_onset_2_foldwise_results = run_LOGOCV(X_MW_onset_2, y_MW_onset_2, X_MW_onset_2_groups,
+                                  MW_onset_2_cv_models, "MW Onset 2", window_size,
+                                  random_state, PCA_flag_MW_onset_5, PCA_threshold_MW_onset_5, smote_flag=True)
 
 
 # evaluate self_report classifier on test/ holdout set
@@ -1867,3 +2193,17 @@ predictor_hist(raw_scores, true_labels_full_set, "mw_onset", window_size, mw2_ta
 predictor_hist(raw_scores, true_labels_full_set, "self_report", window_size, mw2_target, no_mw2_flag)
 if no_mw2_flag == False: # only plot mw2 predictor hist if that's on in this pipeline
     predictor_hist(raw_scores, true_labels_full_set, "mw_onset_2", window_size, mw2_target, no_mw2_flag)
+    
+    
+# display roc curves for foldwise results
+# we have y scores for each fold stored in classifier_type_foldwise_results.
+# each list idx corresponds to a fold. Model name is key (all logistic regression)
+# then y scores and true labels are secondary keys
+
+# plot curve for each classifier type
+plot_roc(self_report_foldwise_results, "Self Report")
+plot_roc(MW_onset_foldwise_results, "MW Onset")
+if mw2_target == 2:
+    plot_roc(MW_onset_2_foldwise_results, "MW Onset 2")
+elif mw2_target == 5:
+    plot_roc(MW_onset_2_foldwise_results, "MW Onset 5")
