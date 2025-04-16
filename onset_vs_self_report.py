@@ -63,6 +63,13 @@ used here. Search was performed with SMOTE and PCA retaining 90% of variance.
 * More often than not, grid search shows models perform better without SMOTE. However.
 not using it results in failure to converge for some models and much lower F1.
 * PCA on/ off and thresholds are currently tuned to be optimal for the 5s window
+* Hyperparams are tuned for mw2_target = 2, 2.5, and 5. Other values will produce an error.
+* Hyperparams have been tuned for the 5s windowed data. Running the 2s windowed data
+will not result in an error, but hyperparameters have not been optimized for this.
+
+4/14 Note: MW Onset events within 1.5 sec of self report have been filtered out.
+This is true for 2 and 5s windowed data. Motivation: ensure the MW2.5 classifier
+isn't just picking up on characteristics of self report.
 
 """
 import pandas as pd
@@ -100,6 +107,9 @@ def train_models(X_train, y_train, X_test, X_test_filtered, models, PCA_flag, ra
         Labels for training.
     X_test : DataFrame
         Features for testing.
+    X_test_filtered: DataFrame
+        Features for testing with rows filtered to match the X_train set specific to
+        this classifier type.
     models : Dictionary
         Models to train. Keys are model names.
     PCA_flag : Boolean
@@ -117,9 +127,6 @@ def train_models(X_train, y_train, X_test, X_test_filtered, models, PCA_flag, ra
         training data. This data will only be changed if PCA is on because
         the same transformation must be applied here as was applied to the 
         train set.
-    X_test_filtered: DataFrame
-        Features for testing with rows filtered to match the X_train set specific to
-        this classifier type.
 
     Returns
     -------
@@ -267,10 +274,6 @@ def train_models_cv(X_train, y_train, X_test, y_test, models, PCA_flag, random_s
         as specified in the models dictionary. Second level keys are "y_scores"
         and hold the y_scores for on the full, unfiltered test set for the model denoted by the
         first level key.
-    X_test : DataFrame
-        Features for testing. This is only changed through this function if
-        PCA_flag is set to true, because the same transformation applied to the
-        train set must be applied to the test set.
 
     """
     # set up result storage structure 
@@ -576,6 +579,7 @@ def plot_auroc_f1(aurocs, f1s, window_size, mw2_target, no_mw2_flag, filtered):
     filtered: Bool
         A flag to designate whether the displayed auroc and f1 were computed 
         from the filtered test set or from the unfiltered test set.
+    
 
     Returns
     -------
@@ -673,14 +677,14 @@ def plot_auroc_f1(aurocs, f1s, window_size, mw2_target, no_mw2_flag, filtered):
     plt.tight_layout(rect=[0,0,.95,1])
     if no_mw2_flag == False:
         if filtered:
-            plt.savefig(f"./onset_v_self_report/{window_size}s/filtered_test_auroc_f1_onset_self_report_{window_size}s_win_mw{mw2_target}")
+            plt.savefig(f"./onset_v_self_report/{window_size}s/filtered_test_auroc_f1_onset_self_report_{window_size}s_win_mw{mw2_target}.png")
         else:
-            plt.savefig(f"./onset_v_self_report/{window_size}s/unfiltered_test_auroc_f1_onset_self_report_{window_size}s_win_mw{mw2_target}")
+            plt.savefig(f"./onset_v_self_report/{window_size}s/unfiltered_test_auroc_f1_onset_self_report_{window_size}s_win_mw{mw2_target}.png")
     else: # specify in plot name if no mw2, include conditional filtered logic
         if filtered:
-            plt.savefig(f"./onset_v_self_report/{window_size}s/filtered_test_auroc_f1_onset_self_report_{window_size}s_win_no_mw2")
+            plt.savefig(f"./onset_v_self_report/{window_size}s/filtered_test_auroc_f1_onset_self_report_{window_size}s_win_no_mw2.png")
         else:
-            plt.savefig(f"./onset_v_self_report/{window_size}s/unfiltered_test_auroc_f1_onset_self_report_{window_size}s_win_no_mw2")
+            plt.savefig(f"./onset_v_self_report/{window_size}s/unfiltered_test_auroc_f1_onset_self_report_{window_size}s_win_no_mw2.png")
     plt.show()
     
 def add_labels(bars, values, max_val, ax):
@@ -854,7 +858,9 @@ def plot_probs(test_results, X_test_relative_times, true_labels_test_set, window
         plt.savefig(f"./onset_v_self_report/{window_size}s/{model_name}_probabilities")
         plt.show()
         
-def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_scores, no_mw2_flag, mw2_target, trial_count_df):
+def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size,
+                    raw_scores, no_mw2_flag, mw2_target, trial_count_df, mw_color,
+                    sr_color, mw2_color):
     """
     Plot raw scores as a function of relative time. For each linear model type, a 
     figure will be created with three subplots: one to show raw scores of control 
@@ -890,6 +896,14 @@ def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, 
     mw2_target : Int.
         The relative time that the second mw_onset vs. control classifier was 
         trained on. For example, 2 or 5. 
+    mw_color : String, matplotlib CSS color name.
+        The color to use for data related to mind wandering in this plot.
+    sr_color : String, matplotlib CSS color name.
+        The color to use for data related to self report in this plot.
+    mw2_color : String, matplotlib CSS color name.
+        The color to use for data related to the second mind wandering classifier
+        in this plot. The second mind wandering classifier refers to the classifier
+        trained on mw_onset events in windows centered at relative times later than time 0. 
 
     Returns
     -------
@@ -949,25 +963,25 @@ def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, 
             MW_onset_2_scores_se = subset.groupby("relative_time").apply(lambda x: MW_onset_2_scores[x.index].sem())
             # plot lines and SE- index of mean probs is relative times bc of groupby
             # MW onset
-            ax.plot(MW_onset_mean_scores.index, MW_onset_mean_scores, label="MW_onset Classifier")
+            ax.plot(MW_onset_mean_scores.index, MW_onset_mean_scores, label="MW_onset Classifier", color=mw_color)
             ax.fill_between(MW_onset_mean_scores.index,
                             MW_onset_mean_scores - MW_onset_scores_se,
                             MW_onset_mean_scores + MW_onset_scores_se,
-                            alpha = .4)
+                            alpha = .4, color = mw_color)
             # self report
-            ax.plot(self_report_mean_scores.index, self_report_mean_scores, label="self_report Classifier")
+            ax.plot(self_report_mean_scores.index, self_report_mean_scores, label="self_report Classifier", color=sr_color)
             ax.fill_between(self_report_mean_scores.index,
                             self_report_mean_scores - self_report_scores_se,
                             self_report_mean_scores + self_report_scores_se,
-                            alpha = .4)
+                            alpha = .4, color = sr_color)
             
             if no_mw2_flag == False: # only plot the second mw classifier if flag is set to False 
                 #mw onset 2
-                ax.plot(MW_onset_2_mean_scores.index, MW_onset_2_mean_scores, label=f"MW_onset {mw2_target} Classifier")
+                ax.plot(MW_onset_2_mean_scores.index, MW_onset_2_mean_scores, label=f"MW_onset {mw2_target} Classifier", color=mw2_color)
                 ax.fill_between(MW_onset_2_mean_scores.index,
                                 MW_onset_2_mean_scores - MW_onset_2_scores_se,
                                 MW_onset_2_mean_scores + MW_onset_2_scores_se,
-                                alpha = .4)
+                                alpha = .4, color = mw2_color)
             
             # subplot details
             ax.set_title(f"{plot_type}: {num_trials} Trials", fontsize=14)
@@ -989,14 +1003,15 @@ def plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, 
             
         plt.tight_layout()
         if no_mw2_flag: # if no mw2, say that in filename
-            plt.savefig(f"./onset_v_self_report/{window_size}s/{model_name}_raw_scores_no_mw2")
+            plt.savefig(f"./onset_v_self_report/{window_size}s/{model_name}_raw_scores_no_mw2.png")
         else:
-            plt.savefig(f"./onset_v_self_report/{window_size}s/{model_name}_raw_scores_mw{mw2_target}")
+            plt.savefig(f"./onset_v_self_report/{window_size}s/{model_name}_raw_scores_mw{mw2_target}.png")
         plt.show()
 
         
 def plot_rf_feat_importance(importances, columns, window_size, classifier_type):
     """
+    Unused in current pipeline.
     Plots random forest feature importance. The resulting plot is saved. Code 
     adapted from HS.
 
@@ -1027,7 +1042,7 @@ def plot_rf_feat_importance(importances, columns, window_size, classifier_type):
     plt.xticks(range(len(columns)), [columns[i] for i in indices], rotation=45, ha='right')
     plt.ylabel('Weight')
     plt.tight_layout()
-    plt.savefig(f"./onset_v_self_report/{window_size}s/rf_feat_importance_{classifier_type}")
+    plt.savefig(f"./onset_v_self_report/{window_size}s/rf_feat_importance_{classifier_type}.png")
     plt.show()
 
 def get_raw_scores(mw_models, sr_models, mw_2_models, X_mw, X_mw2, X_sr, mw2_target, 
@@ -1047,10 +1062,6 @@ def get_raw_scores(mw_models, sr_models, mw_2_models, X_mw, X_mw2, X_sr, mw2_tar
     mw2_models : Dict.
         Dictionary holding models trained to distinguish between MW onset at relative
         time 2 and control.
-    X_sr : DataFrame.
-        Features for the full dataset. If PCA_flag was True for training, this
-        set has been transformed using the same PCA model as the train set for 
-        self_report. Otherwise it is identical to X_mw and X_mw2.
     X_mw : DataFrame.
         Features for the full dataset. If PCA_flag was True for training, this
         set has been transformed using the same PCA model as the train set for 
@@ -1059,17 +1070,23 @@ def get_raw_scores(mw_models, sr_models, mw_2_models, X_mw, X_mw2, X_sr, mw2_tar
         Features for the full dataset. If PCA_flag was True for training, this 
         set has been transformed using the same PCA model as the train set for 
         mw_onset_2. Otherwise it is identical to X_mw and X_sr.
-    feature_importance_flag : Bool.
-        Boolean flag specifying whether or not these raw scores are being calculated
-        to later be used to calculate the forward model for finding feature importance.
-        If True, features are filtered in the same way that training data is filtered
-        for each model (by time and event).
+    X_sr : DataFrame.
+        Features for the full dataset. If PCA_flag was True for training, this
+        set has been transformed using the same PCA model as the train set for 
+        self_report. Otherwise it is identical to X_mw and X_mw2.
+    mw2_target: Float.
+        The time (relative to the event) that training windows are centered on.
+        Should be 2, 2.5, or 5.
     full_set_relative_times : Series
         Relative times for the full feature set, with indices matching X_mw, X_mw2, and X_sr
     true_labels_full_set : Series
         True labels for the full feature set, with indices matching X_mw, X_mw2, and X_sr.
         Values are as follows: 1 = mw_onset event, 2 = self_report event, 0 = control event.
-    
+    feature_importance_flag : Bool.
+        Boolean flag specifying whether or not these raw scores are being calculated
+        to later be used to calculate the forward model for finding feature importance.
+        If True, features are filtered in the same way that training data is filtered
+        for each model (by time and event).
 
     Returns
     -------
@@ -1181,6 +1198,7 @@ def plot_forward_feature_importance(raw_scores, window_size, X_mw, X_mw2, X_sr,
                                     full_set_relative_times, true_labels_full_set,
                                     no_mw2_flag, mw2_target):
     """
+    Unused in current pipeline.
     Calculate and plot forward model feature importance for each linear model,
     for each model type (mw_onset vs. control or self report vs. control). Creates
     one plot for each linear model with two subplots: one for the mw_onset vs. control
@@ -1212,6 +1230,9 @@ def plot_forward_feature_importance(raw_scores, window_size, X_mw, X_mw2, X_sr,
     no_mw2_flag : Bool.
         Boolean flag representing whether or not to plot info related to the 
         mw_onset classifier trained on relative time != 0.
+    mw2_target: Float.
+        The time (relative to the event) that training windows are centered on.
+        Should be 2, 2.5, or 5.
 
 
     Returns
@@ -1336,9 +1357,184 @@ def plot_forward_feature_importance(raw_scores, window_size, X_mw, X_mw2, X_sr,
             plt.savefig(f"onset_v_self_report/{window_size}s/{model_name}_forward_feat_importance_mw{mw2_target}.png") 
         plt.show()
         
-def predictor_hist(raw_scores, true_labels_full_set, classifier_type, window_size, mw2_target, no_mw2_flag):
+def plot_forward_feature_importance_reformatted(raw_scores, window_size, X_mw, X_mw2, X_sr,
+                                    full_set_relative_times, true_labels_full_set,
+                                    no_mw2_flag, mw2_target, mw_color, sr_color, mw2_color):
+    """
+    Calculate and plot forward model feature importance for each linear model,
+    for each model type (mw_onset vs. control or self report vs. control). Creates
+    one plot for each linear model with two subplots: one for the mw_onset vs. control
+    classifier and one for the self_report vs. control classifier.
+    Instead of creating side by side subplots, this version creates a single bar chart.
+    The bars are in order of the mw2 classifier if present, otherwise in order of the
+    mw classifier, feature importance for all classifier types is represented 
+    in this single figure.
+
+    Parameters
+    ----------
+    raw_scores : Dict.
+        Nested dictionary holding raw scores for each linear model (SVM, logistic 
+        regression, LDA), for each model type (mw onset vs. control and self 
+        report vs. control). First level keys are model names while second level 
+        keys are mw_onset_raw_scores and self_report_raw_scores. 
+    window_size : Int.
+        The size of the sliding window for the data currently being processed.
+    X_mw : DataFrame.
+        Features for the full dataset, no PCA transform applied. The same scaler
+        for the mw_onset vs. control classifier was applied to this.
+    X_mw2 : DataFrame.
+        Features for the full dataset, no PCA transform applied. The same scaler
+        for the mw_onset_2 vs. control classifier was applied to this.  
+    X_sr : DataFrame.
+        Features for the full dataset, no PCA transform applied. The same scaler
+        for the self_report vs. control classifier was applied to this.
+    full_set_relative_times : Series
+        Relative times for the full dataset, with index matching X.
+    true_labels_full_set : Series
+        True labels for the full dataset, with index matching X. 0 is control,
+        1 is MW_onset, 2 is self_report.
+    no_mw2_flag : Bool.
+        Boolean flag representing whether or not to plot info related to the 
+        mw_onset classifier trained on relative time != 0.
+    mw_color : String, matplotlib CSS color name.
+        The color to use for data related to mind wandering in this plot.
+    sr_color : String, matplotlib CSS color name.
+        The color to use for data related to self report in this plot.
+    mw2_color : String, matplotlib CSS color name.
+        The color to use for data related to the second mind wandering classifier
+        in this plot. The second mind wandering classifier refers to the classifier
+        trained on mw_onset events in windows centered at relative times later than time 0. 
+
+
+    Returns
+    -------
+    None.
+    
     """
     
+    # concat X with times and labels for filtering
+    X_mw_combined = pd.concat([X_mw, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
+    if no_mw2_flag == False:
+        X_mw2_combined = pd.concat([X_mw2, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
+    X_sr_combined = pd.concat([X_sr, full_set_relative_times.rename("relative_time"), true_labels_full_set.rename("label")], axis=1)
+
+    # filter for mw
+    X_mw = X_mw_combined[
+        ((X_mw_combined["label"] == 0) & (X_mw_combined["relative_time"] == 0)) |
+        ((X_mw_combined["label"] == 1) * (X_mw_combined["relative_time"] == 0))
+        ]
+    # filter for mw2
+    if no_mw2_flag == False:
+        X_mw2 = X_mw2_combined[
+            ((X_mw2_combined["label"] == 0) & (X_mw2_combined["relative_time"] == mw2_target)) |
+            ((X_mw2_combined["label"] == 1) * (X_mw2_combined["relative_time"] == mw2_target))
+            ]
+    # filter for sr
+    X_sr = X_sr_combined[
+        ((X_sr_combined["label"] == 0) & (X_sr_combined["relative_time"] == (-.5 * window_size))) |
+        ((X_sr_combined["label"] == 2) * (X_sr_combined["relative_time"] == (-.5 * window_size)))
+        ]
+    
+    
+    # drop relative time and label from each filtered dataset
+    X_mw = X_mw.copy()
+    X_sr = X_sr.copy()
+    X_mw.drop(columns = ["label", "relative_time"], inplace=True)
+    X_sr.drop(columns = ["label", "relative_time"], inplace=True)
+    if no_mw2_flag == False:
+        X_mw2 = X_mw2.copy()
+        X_mw2.drop(columns = ["label", "relative_time"], inplace=True)
+        
+    # get columns - they're the same for each set so choose any
+    columns = X_mw.columns
+    
+    # calculate forward model feature importance and plot for each linear model, for each model type
+    # one plot for each model feature importance with subplots for mw onset and sr model types
+    
+    
+    for model_name, scores in raw_scores.items():
+        Z_mw = scores["MW_onset_raw_scores"]
+        Z_sr = scores["self_report_raw_scores"]
+        if no_mw2_flag == False:
+            Z_mw2 = scores["MW_onset_2_raw_scores"]
+        
+        # find A for mw model type
+        A_numerator_mw = np.dot(X_mw.T, Z_mw) # transpose X so inner dimensions match for mult.
+        A_denom_mw = np.dot(Z_mw.T, Z_mw)
+        A_mw = A_numerator_mw / A_denom_mw # now A has one importance value for each feature
+        
+        if no_mw2_flag == False:
+            # find A for mw 2 model type
+            A_numerator_mw2 = np.dot(X_mw2.T, Z_mw2) # transpose X so inner dimensions match for mult.
+            A_denom_mw2 = np.dot(Z_mw2.T, Z_mw2)
+            A_mw2 = A_numerator_mw2 / A_denom_mw2 # now A has one importance value for each feature
+        
+        # find A for sr model type
+        A_numerator_sr = np.dot(X_sr.T, Z_sr) # transpose X so inner dimensions match for mult.
+        A_denom_sr = np.dot(Z_sr.T, Z_sr)
+        A_sr = A_numerator_sr / A_denom_sr # now A has one importance value for each feature
+        
+        feature_names = columns
+            
+        # plot
+        # Get feature importances for each model type
+        importances_mw = np.abs(A_mw)
+        importances_sr = np.abs(A_sr)
+        if no_mw2_flag == False:
+            importances_mw2 = np.abs(A_mw2)
+            
+        
+    
+        #indices_mw = np.argsort(importances_mw)[::-1]  # Sort feature importances in descending order
+        #indices_sr = np.argsort(importances_sr)[::-1]  # Sort feature importances in descending order
+        if no_mw2_flag == False:
+            # sort all feature importances so they are aligned with mw2 importances
+            sort_indices = np.argsort(importances_mw2)[::-1] 
+            sorted_features = [feature_names[i] for i in sort_indices]
+            
+            importances_mw = importances_mw[sort_indices]
+            importances_mw2 = importances_mw2[sort_indices]
+            importances_sr = importances_sr[sort_indices]
+        else: # if no mw2, order by mw importances
+            sort_indices = np.argsort(importances_mw)[::-1]
+            sorted_features = [feature_names[i] for i in sort_indices]
+            
+            importances_mw = importances_mw[sort_indices]
+            importances_sr = importances_sr[sort_indices]
+    
+        # set x axis to len feature names 
+        x = np.arange(len(feature_names))
+        bar_width = .25
+        plt.figure(figsize=(20,15))
+        ax = plt.gca()
+        
+        if no_mw2_flag == False: # include mw2, mw, and sr
+            ax.bar(x - bar_width, importances_mw2, width = bar_width, label = f"MW_Onset_{mw2_target}", color = mw2_color)
+            ax.bar(x, importances_mw, width = bar_width, label="MW_Onset", color= mw_color)
+            ax.bar(x + bar_width, importances_sr, width = bar_width, label=f"self_report", color=sr_color)
+        # plot when no mw2 is True
+        else: # just include mw and sr
+            ax.bar(x - bar_width, importances_mw, width = bar_width, label="MW_Onset", color=mw_color)
+            ax.bar(x + bar_width, importances_sr, width = bar_width, label=f"self_report", color=sr_color)
+            
+        ax.set_xticks(x)
+        ax.set_xticklabels(sorted_features, rotation=45, ha="right")
+        ax.set_ylabel("Importance (absolute value)")
+        ax.set_title(f"Forward Model Feature Importance: {model_name} {window_size}s Sliding Window")
+        ax.grid(True)
+        ax.legend()
+    
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        
+        if no_mw2_flag:
+            plt.savefig(f"onset_v_self_report/{window_size}s/{model_name}_forward_feat_importance_no_mw2_new_layout.png") 
+        else:
+            plt.savefig(f"onset_v_self_report/{window_size}s/{model_name}_forward_feat_importance_mw{mw2_target}_new_layout.png") 
+        plt.show()
+        
+def predictor_hist(raw_scores, true_labels_full_set, classifier_type, window_size, mw2_target, no_mw2_flag):
+    """
+    Unused in current pipeline.
     Plot and saves a histogram of the predictor variable for each model. One figure
     is created with a subplot for each model type. Uses raw scores rather than
     predicted probabilities, so plots are only made for linear models. The
@@ -1445,6 +1641,33 @@ def run_LOGOCV(X, y, groups, models, classifier_type, window_size, random_state,
     Although it appears that smote occurs outside of this pipeline, that's applied
     to the train sets while logocv operates on the full datasets (subsets for
     each classifier type) so it should be done again here.
+    
+    Accepts:
+    X: DataFrame
+        Full filtered feature set (no train test split) for the classifier of interest.
+    y: Series
+        Full filtered labels set (no train test split) for the classifier of interest.
+    groups: Series
+        LOGOCV groups (subject ids) for this classifier after filtering 
+        has been applied (still no train test split prior, though)
+    models: Dict.
+        Dictionary of initialized models for cross validation for this classifier type.
+        First level keys are model names, ex. Logistic Regression.
+    classifier_type: String.
+        The classifier type being trained ex. Self Report or MW Onset.
+    window_size: Int
+        The size of the windows for the data being used in this pipeline. 2 or 5.
+    random_state: Int
+        The random state used throughout this pipeline.
+    PCA_flag: Bool
+        A flag indicating whether or not to use PCA for LOGOCV with this classifier
+        type.
+    PCA_thresh: Float
+        The amount of variance to retain if PCA is used. Specify as a decimal 
+        ex. .95 to retain 95% of variance.
+    smote_flag: Bool
+        A flag indicating whether or not to use SMOTE to generate synthetic data
+        and balance class distribution. 
     """
     # new logocv object for this classifier type
     logo = LeaveOneGroupOut()
@@ -1456,6 +1679,9 @@ def run_LOGOCV(X, y, groups, models, classifier_type, window_size, random_state,
         X_train_fold, X_test_fold = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
         y_train_fold, y_test_fold = y.iloc[train_idx].copy(), y.iloc[test_idx].copy()
         
+        # get test subject
+        test_subject = groups.iloc[test_idx].unique()[0] # only one per group
+        
         if smote_flag:
             smote = SMOTE(random_state = random_state)
             X_train_fold, y_train_fold = smote.fit_resample(X_train_fold, y_train_fold)
@@ -1464,16 +1690,68 @@ def run_LOGOCV(X, y, groups, models, classifier_type, window_size, random_state,
         models, results = train_models_cv(X_train_fold, y_train_fold, X_test_fold, y_test_fold, 
                                           models, PCA_flag, random_state, PCA_thresh)
         
+        # add test sub to results
+        results["test_subject"] = test_subject
+        
         foldwise_results.append(results)
         
     return foldwise_results
 
-def plot_roc(foldwise_results, classifier_type):
+def plot_roc(foldwise_results, classifier_type, window_size, model_names,
+             mw_color, sr_color, mw2_color):
+    """
+    Plot the ROC curve by concatenating AUROC over folds from cross validation.
+    Save the plot.
+    
+    Accepts:
+    -------
+    foldwise_results: List.
+        List of dictionaries, there is one listitem/ dictionary for each LOGOCV
+        fold. Each dictionary has two keys, the model name (usually Logistic Regression)
+        and "test_subject". The model name key holds another dictionary of size two,
+        where keys are "true_labels" and "y_scores". As the names imply, these
+        hold true labels and y_scores for the LOGOCV fold represented by this
+        top-level list entry. "test_subject" holds the subject id for the subject
+        that the classifiers were tested on for this fold (since we are doing 
+        LOGOCV over subjects, there's one "test subject" for each fold).
+    classifier_type: String.
+        A string representing the type of classfier that we are plotting the 
+        ROC curve for. This must be "Self Report", "MW Onset", "MW Onset 2.5", 
+        "MW Onset 2", or "MW Onset 5". It is important to reference the event 
+        type targeted by the classifier and the relative time that training 
+        windows are centered on (when not time 0) so that it is clear what the 
+        plot is for as this is used in the plot title. The string must be one of 
+        the listed values in this description for color assignment to work properly.
+    window_size: Int.
+        The size of the window being used. Usually 2 or 5. Used for the save path.
+    model_names: List.
+        A list of strings representing the models that we are plotting ROC curves
+        for. Typically this will just be Logistic Regression, but we can add to this
+        to plot multiple ROC curves at once if training multiple model types.
+    mw_color : String, matplotlib CSS color name.
+        The color to use for data related to mind wandering in this plot.
+    sr_color : String, matplotlib CSS color name.
+        The color to use for data related to self report in this plot.
+    mw2_color : String, matplotlib CSS color name.
+        The color to use for data related to the second mind wandering classifier
+        in this plot. The second mind wandering classifier refers to the classifier
+        trained on mw_onset events in windows centered at relative times later than time 0. 
+    
+    Returns
+    -------
+    None.
+        
+    """
     # Plot ROC Curve
     # code adapted from HS
     
-    model_names = foldwise_results[0].keys()
-    print("Model names in foldwise results", model_names)
+    # set color based on classifier type
+    if classifier_type == "Self Report":
+        color = sr_color
+    elif classifier_type == "MW Onset":
+        color = mw_color
+    elif (classifier_type == "MW Onset 2") | (classifier_type == "MW Onset 2.5") | (classifier_type == "MW Onset 5"):
+        color = mw2_color
     
     # flatten foldwise results dictionary and concat to feed into roc curve function
     
@@ -1488,7 +1766,7 @@ def plot_roc(foldwise_results, classifier_type):
             all_true_labels.extend(fold[model_name]["true_labels"])
             
         fpr, tpr, _ = roc_curve(all_true_labels, all_y_scores)
-        plt.plot(fpr, tpr, label=f'{model_name} AUROC = {roc_auc_score(all_true_labels, all_y_scores):.2f})')
+        plt.plot(fpr, tpr, label=f"{model_name} AUROC = {roc_auc_score(all_true_labels, all_y_scores):.2f})", color=color)
         
     plt.plot([0, 1], [0, 1], 'k--')  # Diagonal line
     plt.xlabel('False Positive Rate')
@@ -1499,19 +1777,156 @@ def plot_roc(foldwise_results, classifier_type):
     plt.tight_layout()
     plt.savefig(f"onset_v_self_report/{window_size}s/ROC_curve_{classifier_type}.png")
     
+def plot_foldwise_auroc(foldwise_results_mw, foldwise_results_sr, window_size,
+                        model_names, mw_color, sr_color, mw2_color,
+                        mw2_target= None, foldwise_results_mw2 = None):
+    """
+    Plots a bar chart of auroc for each fold of LOGOCV. Labels denoting the subject id that
+    the model was tested on are represented on the x-axis. All classifier types
+    are represented in one figure and bars are positioned in descending order
+    of auroc for the mw2 classifier if present. If not present, bars are positioned
+    in descending order of auroc for the mw classifier.
+    
+    Accepts:
+    -------
+    foldwise_resullts_mw : List.
+        List of dictionaries, there is one listitem/ dictionary for each LOGOCV
+        fold during LOGOCV for the mind wandering classifier. Each dictionary 
+        has two keys, the model name (usually Logistic Regression)
+        and "test_subject". The model name key holds another dictionary of size two,
+        where keys are "true_labels" and "y_scores". As the names imply, these
+        hold true labels and y_scores for the LOGOCV fold represented by this
+        top-level list entry. "test_subject" holds the subject id for the subject
+        that the classifiers were tested on for this fold (since we are doing 
+        LOGOCV over subjects, there's one "test subject" for each fold).
+    foldwise_results_sr: List
+        The same list of dictionaries as seen in foldwise_results_mw, but holding
+        results from LOGOCV for the self report classifier.
+    window_size: Int
+        The size of the window used for data. 2 or 5. Used in plot title and save 
+        path.
+    model_names: List.
+        A list of strings representing the models that we are plotting ROC curves
+        for. Typically this will just be Logistic Regression, but we can add to this
+        to plot multiple ROC curves at once if training multiple model types.
+    mw_color : String, matplotlib CSS color name.
+        The color to use for data related to mind wandering in this plot.
+    sr_color : String, matplotlib CSS color name.
+        The color to use for data related to self report in this plot.
+    mw2_color : String, matplotlib CSS color name.
+        The color to use for data related to the second mind wandering classifier
+        in this plot. The second mind wandering classifier refers to the classifier
+        trained on mw_onset events in windows centered at relative times later than time 0. 
+    mw2_target: Float.
+        The center of the windows used for training data for the mw2 classifier if present.
+    foldwise_results_mw2: List.
+        The same list of dictionaries as seen in foldwise_results_mw and foldwise_results_sr,
+        but holding results from LOGOCV for the mw2 classifier.
+        
+    Returns
+    -------
+    None.
+    
+    """
+    all_results = {}
+    
+    # conditionally add mw2 to all results - must be first so its ordered first
+    mw2_label = f"MW Onset {mw2_target}"
+    if foldwise_results_mw2 is not None:
+        all_results[mw2_label] = foldwise_results_mw2
+        
+    # now add the other two
+    all_results["MW Onset"] = foldwise_results_mw
+    all_results["Self Report"] = foldwise_results_sr
+
+
+    for model_name in model_names: # new figure for each model (realistically there will probably only be one- logistic regression)
+        classifier_data = {key: {"test_subjects": [], "aurocs": []} for key in all_results}
+    
+        for classifier_type, results in all_results.items():
+            for fold in results:
+                # get data
+                y_scores = fold[model_name]["y_scores"]
+                true_labels = fold[model_name]["true_labels"]
+                test_subject = fold["test_subject"]
+                
+                # calculate auroc
+                unique_vals = np.unique(true_labels)
+
+                if len(unique_vals) < 2:
+                    auroc = np.nan
+                else:
+                    auroc = roc_auc_score(true_labels, y_scores)
+                
+                # append to lists
+                classifier_data[classifier_type]["test_subjects"].append(test_subject)
+                classifier_data[classifier_type]["aurocs"].append(auroc)
+            
+        # determine sorting order
+        if mw2_label in classifier_data:
+            sort_by = mw2_label
+        else:
+            sort_by = "MW Onset"
+        
+        # sort auroc, subject in order of descending auroc for reference classifier
+        auroc_sub_pairs = list(zip(classifier_data[sort_by]["test_subjects"], classifier_data[sort_by]["aurocs"])) # zip together
+        # handle nans when sorting
+        sorted_auroc_sub_pairs = sorted(auroc_sub_pairs, key=lambda x: (np.isnan(x[1]),
+                                                                        -x[1] if not np.isnan(x[1]) else float('-inf')))
+        sort_by_subs, sort_by_aurocs = zip(*sorted_auroc_sub_pairs)# separate the lists again
+        
+        x = np.arange(len(sort_by_subs))
+        bar_width = .25
+        
+        # plot the figure for this model
+        plt.figure(figsize=(20,15))
+        
+        # plot data for all classifier types
+        for idx, (classifier_type, data) in enumerate(classifier_data.items()):
+            # set color based on classifier type
+            if classifier_type == "MW Onset":
+                color = mw_color
+            elif classifier_type == "Self Report":
+                color = sr_color
+            elif (classifier_type == "MW Onset 2") | (classifier_type == "MW Onset 2.5") | (classifier_type == "MW Onset 5"):
+                color = mw2_color
+            # map subs to auroc for this classifier type
+            subject_to_auroc = dict(zip(data["test_subjects"], data["aurocs"]))
+            # sort aurocs according to reference classifier
+            sorted_aurocs = [subject_to_auroc.get(sub, np.nan) for sub in sort_by_subs]
+            plt.bar(x+ (idx * bar_width), sorted_aurocs, width = bar_width, label=classifier_type, color=color)
+            plt.axhline(y=0.5, color="black", linestyle='--', linewidth=1)
+            
+        plt.xticks(x+ bar_width * len(classifier_data), sort_by_subs, rotation=45, ha="right")
+        plt.xlabel("Test Subject")
+        plt.ylabel("AUROC")
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.grid(True)
+        plt.legend()
+        plt.title(f"Foldwise AUROC: LOGOCV Over Subjects: {model_name}, {window_size}s Sliding Window")
+        plt.savefig(f"onset_v_self_report/{window_size}s/foldwise_auroc_{model_name}.png")
+        plt.close()
+    
     
     
     
 #%%
     
 
-window_size = 5 # options are two and five. 2 has less imbalance, hp sweep has not been done on 2. Focusing on 5. Changes needed to PCA flag
-# and threshold if reverting to 2 (to make optimal)
+window_size = 5 # hyperparams/ pca/ smote have not been optimized for the 2s window
+model_names = ["Logistic Regression"] # list the models you are working with as denoted in the results dictionaries
+
+# define the colors you'd like to use in plots (matplotlib color names: https://matplotlib.org/stable/gallery/color/named_colors.html)
+mw_color =  "cadetblue" # the color for mind wandering in plots
+sr_color =  "seagreen" # the color for self report in plots
+mw2_color =  "orangered" # the color for mind wandering 2 in plots (this is the second mw_onset classifier, can be trained on windows centered at various times ex. 2.5, 5)
 
 PCA_flag_self_report = False
 PCA_threshold_self_report = None
-PCA_flag_MW_onset = True
-PCA_threshold_MW_onset = .9
+PCA_flag_MW_onset = False
+PCA_threshold_MW_onset = None
+PCA_flag_MW_onset_2_5 = False 
+PCA_threshold_MW_onset_2_5 = None
 PCA_flag_MW_onset_2 = True
 PCA_threshold_MW_onset_2 = .95
 PCA_flag_MW_onset_5 = True
@@ -1524,12 +1939,9 @@ undersample_flag = False # set to True to use undersampling to achieve more bala
 #PCA_threshold = .9 # for PCA
 # optimal PCA_flag and threshold is model specific
 no_mw2_flag = False # set to true to prevent plotting of the MW_onset vs control classifier trained on relative time != 0
-mw2_target = 5 # set to target time for the second mw_onset vs. control classifier. currently only supports 2 or 5. other times could be supported 
-# easily but would need to find new optimal hyperparams or set a condition to use default if not 2 or 5
+mw2_target = 2.5 # set to target time for the second mw_onset vs. control classifier. currently 2, 2.5, and 5 are supported.
 
 # DO NOT SET BOTH UNDERSAMPLE_FLAG AND SMOTE_FLAG TO TRUE AT THE SAME TIME THAT WOULD BE WEIRD/ ERROR WILL BE THROWN
-assert window_size == 5, "Warning: Settings show window_size 2 is being targeted. PCA hasn't been optimized for this window size."
-
 assert not (SMOTE_flag == True and undersample_flag == True), "Error: cannot use SMOTE and undersampling at the same time this way. Change one to False or adapt the pipeline."
     
 
@@ -1758,7 +2170,7 @@ else:
 # define models with optimal hps
 if window_size == 2:
     self_report_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=10), 
+            'Logistic Regression': LogisticRegression(random_state = random_state), 
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.1), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
            # 'Random Forest': RandomForestClassifier(random_state = random_state, n_estimators = 200),
@@ -1770,7 +2182,7 @@ if window_size == 2:
         }
     
     MW_onset_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01),
+            'Logistic Regression': LogisticRegression(random_state = random_state),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 100),
@@ -1782,7 +2194,7 @@ if window_size == 2:
         }
     
     MW_onset_2_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=.00001),
+            'Logistic Regression': LogisticRegression(random_state = random_state),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 10),
@@ -1795,7 +2207,7 @@ if window_size == 2:
     
 if window_size == 5:
     self_report_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=1, solver="lbfgs", penalty = "l2"), 
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=100, solver="lbfgs", penalty = "l2"), 
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
@@ -1807,7 +2219,7 @@ if window_size == 5:
         }
     
     MW_onset_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="lbfgs"),
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="liblinear"),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
@@ -1819,7 +2231,7 @@ if window_size == 5:
         }
     if mw2_target == 2:
         MW_onset_2_models = {
-                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .1, penalty = "l2", solver="liblinear"),
                 #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
                 #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
@@ -1831,7 +2243,7 @@ if window_size == 5:
             }
     elif mw2_target == 5:
         MW_onset_2_models = {
-                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="lbfgs"),
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
                 #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
                 #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
@@ -1841,9 +2253,13 @@ if window_size == 5:
                 #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
                 #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
             }
+    elif mw2_target == 2.5:
+        MW_onset_2_models = {
+            'Logistic Regression': LogisticRegression(random_state=random_state, C=.01, penalty = "l2", solver = "lbfgs")
+            }
 if window_size == 2:
     self_report_cv_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=10), 
+            'Logistic Regression': LogisticRegression(random_state = random_state),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.1), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
            # 'Random Forest': RandomForestClassifier(random_state = random_state, n_estimators = 200),
@@ -1855,7 +2271,7 @@ if window_size == 2:
         }
     
     MW_onset_cv_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01),
+            'Logistic Regression': LogisticRegression(random_state = random_state),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 100),
@@ -1867,7 +2283,7 @@ if window_size == 2:
         }
     
     MW_onset_2_cv_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=.00001),
+            'Logistic Regression': LogisticRegression(random_state = random_state),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 20, n_estimators = 10),
@@ -1880,7 +2296,7 @@ if window_size == 2:
     
 if window_size == 5:
     self_report_cv_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=1, solver="lbfgs", penalty = "l2"), 
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=100, solver="lbfgs", penalty = "l2"),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=10), 
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
@@ -1892,7 +2308,7 @@ if window_size == 5:
         }
     
     MW_onset_cv_models = {
-            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="lbfgs"),
+            'Logistic Regression': LogisticRegression(random_state = random_state, C=.01, penalty = "l2", solver="liblinear"),
             #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
             #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
             #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 200),
@@ -1904,7 +2320,7 @@ if window_size == 5:
         }
     if mw2_target == 2:
         MW_onset_2_cv_models = {
-                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .1, penalty = "l2", solver="liblinear"),
                 #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
                 #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
@@ -1916,7 +2332,7 @@ if window_size == 5:
             }
     elif mw2_target == 5:
         MW_onset_2_cv_models = {
-                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="lbfgs"),
+                'Logistic Regression': LogisticRegression(random_state = random_state, C = .01, penalty = "l2", solver="liblinear"),
                 #'Support Vector Machine': SVC(kernel="linear", probability=True, random_state = random_state, C=.01),
                 #'Decision Tree': DecisionTreeClassifier(random_state = random_state),
                 #'Random Forest': RandomForestClassifier(random_state = random_state, max_depth = 5, n_estimators = 100),
@@ -1926,6 +2342,9 @@ if window_size == 5:
                 #'Naive Bayes': GaussianNB(var_smoothing= .000000001),
                 #'XGBoost': XGBClassifier(random_state = random_state, colsample_bytree=1, learning_rate=.01, max_depth=3, n_estimators=100, subsample=1)
             }
+    elif mw2_target == 2.5:
+        MW_onset_2_cv_models = {
+            'Logistic Regression': LogisticRegression(random_state=random_state, C=.01, penalty = "l2", solver = "lbfgs")}
 
 # sanity checks
 #print(f"MW_Onset Features: {X_train_MW_onset.columns}")
@@ -2071,6 +2490,16 @@ elif mw2_target == 5:
     MW_onset_2_foldwise_results = run_LOGOCV(X_MW_onset_2, y_MW_onset_2, X_MW_onset_2_groups,
                                   MW_onset_2_cv_models, "MW Onset 2", window_size,
                                   random_state, PCA_flag_MW_onset_5, PCA_threshold_MW_onset_5, smote_flag=True)
+elif mw2_target == 2.5:
+    MW_onset_2_models, MW_onset_2_results, X_test_mw2, X_mw2, MW_onset_2_filtered_results, X_test_filtered_MW_onset_2, X_mw2_no_PCA = train_models(X_train_MW_onset_2,
+                                                                                                         y_train_MW_onset_2, X_test,
+                                                                                                         X_test_filtered_MW_onset_2,
+                                                                                                         MW_onset_2_models, PCA_flag_MW_onset_2_5,
+                                                                                                         random_state, PCA_threshold_MW_onset_2_5, X)
+    # logocv
+    MW_onset_2_foldwise_results = run_LOGOCV(X_MW_onset_2, y_MW_onset_2, X_MW_onset_2_groups,
+                                  MW_onset_2_cv_models, "MW Onset 2", window_size,
+                                  random_state, PCA_flag_MW_onset_2_5, PCA_threshold_MW_onset_2_5, smote_flag=True)
 
 
 # evaluate self_report classifier on test/ holdout set
@@ -2175,7 +2604,8 @@ if PCA_flag == False:
 raw_scores = get_raw_scores(MW_onset_models, self_report_models, MW_onset_2_models,
                             X_mw, X_mw2, X_sr, mw2_target, full_set_relative_times,
                             true_labels_full_set, window_size, feature_importance_flag = False)
-plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_scores, no_mw2_flag, mw2_target, trial_count_df)
+plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size,
+                raw_scores, no_mw2_flag, mw2_target, trial_count_df, mw_color, sr_color, mw2_color)
 
 
 
@@ -2183,16 +2613,16 @@ plot_raw_scores(full_set_relative_times, true_labels_full_set, window_size, raw_
 feat_importance_raw_scores = get_raw_scores(MW_onset_models, self_report_models, MW_onset_2_models, 
                                             X_mw, X_mw2, X_sr, mw2_target, full_set_relative_times,
                                             true_labels_full_set, window_size, feature_importance_flag = True)
-plot_forward_feature_importance(feat_importance_raw_scores, window_size, X_mw_no_PCA,
+plot_forward_feature_importance_reformatted(feat_importance_raw_scores, window_size, X_mw_no_PCA,
                                 X_mw2_no_PCA, X_sr_no_PCA, full_set_relative_times,
-                                true_labels_full_set, no_mw2_flag, mw2_target)
+                                true_labels_full_set, no_mw2_flag, mw2_target,mw_color, sr_color, mw2_color)
 
 # plot predictor hists 
 
-predictor_hist(raw_scores, true_labels_full_set, "mw_onset", window_size, mw2_target, no_mw2_flag)
-predictor_hist(raw_scores, true_labels_full_set, "self_report", window_size, mw2_target, no_mw2_flag)
-if no_mw2_flag == False: # only plot mw2 predictor hist if that's on in this pipeline
-    predictor_hist(raw_scores, true_labels_full_set, "mw_onset_2", window_size, mw2_target, no_mw2_flag)
+#predictor_hist(raw_scores, true_labels_full_set, "mw_onset", window_size, mw2_target, no_mw2_flag)
+#predictor_hist(raw_scores, true_labels_full_set, "self_report", window_size, mw2_target, no_mw2_flag)
+#if no_mw2_flag == False: # only plot mw2 predictor hist if that's on in this pipeline
+    #predictor_hist(raw_scores, true_labels_full_set, "mw_onset_2", window_size, mw2_target, no_mw2_flag)
     
     
 # display roc curves for foldwise results
@@ -2200,10 +2630,18 @@ if no_mw2_flag == False: # only plot mw2 predictor hist if that's on in this pip
 # each list idx corresponds to a fold. Model name is key (all logistic regression)
 # then y scores and true labels are secondary keys
 
-# plot curve for each classifier type
-plot_roc(self_report_foldwise_results, "Self Report")
-plot_roc(MW_onset_foldwise_results, "MW Onset")
-if mw2_target == 2:
-    plot_roc(MW_onset_2_foldwise_results, "MW Onset 2")
-elif mw2_target == 5:
-    plot_roc(MW_onset_2_foldwise_results, "MW Onset 5")
+# plot curve for each classifier type - these are teh cross validation results
+plot_roc(self_report_foldwise_results, "Self Report", window_size, model_names, mw_color, sr_color, mw2_color)
+plot_roc(MW_onset_foldwise_results, "MW Onset", window_size, model_names, mw_color, sr_color, mw2_color)
+plot_roc(MW_onset_2_foldwise_results, f"MW Onset {mw2_target}", window_size, model_names, mw_color, sr_color, mw2_color)
+
+# calculate and plot foldwise auroc
+if no_mw2_flag == False:
+    plot_foldwise_auroc(MW_onset_foldwise_results, self_report_foldwise_results,
+                        window_size, model_names, mw_color, sr_color, mw2_color,
+                        mw2_target, MW_onset_2_foldwise_results)
+else:
+    plot_foldwise_auroc(MW_onset_foldwise_results, self_report_foldwise_results,
+                        window_size, model_names, mw_color, sr_color, mw2_color)
+
+

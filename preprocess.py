@@ -7,16 +7,63 @@ Created on Mon Mar 24 12:52:45 2025
 
 Drop unnecessary columns, missing values, get number of trials, and perform
 an 80/ 20 train test split.
+
+Gets rid of rows where the event is MW Onset and the event ends less than or equal
+to 1.5 sec before page end
 """
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-window_size = 5
+window_size = 2
 random_state = 42
+
+filter_flag = True # set to True to filter out MW Onset events within 1.5 sec of page end.
 
 filepath = f"group_R_features_slide_wlen{window_size}.csv"
 data = pd.read_csv(filepath,index_col=0)
+
+if filter_flag:
+    event_labels = pd.read_csv("group_event_label.csv") # for filtering out mw too close to self report
+    
+    valid_mask = ~((event_labels["label"] == "MW_onset") & ((event_labels["page_end"] - event_labels["event_time"]) <= 1.5))
+    
+    # how many unique sub, run, page, label combos in event labels
+    
+    grouped = event_labels.groupby(["label", "sub_id", "run", "page"]).size()
+    
+    # Check if all groups have exactly 1 row
+    all_single = (grouped == 1).all()
+    print("Each combination occurs exactly once:", all_single)
+    
+    # each combination of event type (label), sub_id, run, and page appears 
+    # once in event labels
+    
+    print(data.head())
+    print(valid_mask)
+    
+    false_indices = valid_mask[~valid_mask].index
+    print(false_indices)
+    
+    # add valid mask to event labels
+    event_labels["valid"] = valid_mask
+    
+    # now drop rows with the same sub_id, page, and run as rows with valid=False in event_labels
+    # mark invalid combos using flag in event labels by saving their event type (label), sub id, run, and page
+    invalid_combos = event_labels[event_labels["valid"] == False][["label", "sub_id", "run", "page"]]
+    # now drop rows from data that have that label, subject id, run, and page 
+    # first, merge data and invalid combos
+    merged = data.merge(
+        invalid_combos,
+        on=["label", "sub_id", "run", "page"],
+        how="left",
+        indicator=True # will show both if this label, sub id, run, and page was 
+        #in both data and invalid combos, these are what we want to drop
+    )
+    
+    # keep rows that didn't match with invalid combos in data
+    data = merged[merged["_merge"] == "left_only"].drop(columns="_merge")
+
 
 # trials calculations - pre dropping
 trial_calc = data.copy()
@@ -104,42 +151,6 @@ trial_count_df = pd.DataFrame({
 #pd.set_option("display.max_columns", None)
 #trial_calc.head()
 # for each of these groups, indicate new trial when 
-
-
-"""
-# old, broken. This strategy doesn't account for rows dropped due to 
-# missing values
-sr_trial_calc = trial_calc[trial_calc["label"] == "self_report"]
-mw_trial_calc = trial_calc[trial_calc["label"] == "MW_onset"]
-ctl_trial_calc = trial_calc[(trial_calc["label"] == "control")]
-
-sr_trial_calc = sr_trial_calc.copy()
-sr_trial_calc["time_diff"] = sr_trial_calc["relative_time"].diff()
-sr_trial_calc["new_trial"] = sr_trial_calc["time_diff"].abs() > .25
-
-mw_trial_calc = mw_trial_calc.copy()
-mw_trial_calc["time_diff"] = mw_trial_calc["relative_time"].diff()
-mw_trial_calc["new_trial"] = mw_trial_calc["time_diff"].abs() > .25
-
-ctl_trial_calc = ctl_trial_calc.copy()
-ctl_trial_calc["time_diff"] = ctl_trial_calc["relative_time"].diff()
-ctl_trial_calc["new_trial"] = ctl_trial_calc["time_diff"].abs() > .25
-
-
-sr_trials = sr_trial_calc["new_trial"].sum() + 1 # add one for first trial
-print(sr_trials, " sr trials")
-
-mw_trials = mw_trial_calc["new_trial"].sum() + 1 # add one for first trial
-print(mw_trials, " mw trials")
-
-ctl_trials = ctl_trial_calc["new_trial"].sum() + 1 # add one for first trial
-print(ctl_trials, " ctl trials")
-
-trial_calc["time_diff"] = trial_calc["relative_time"].diff()
-trial_calc["new_trial"] = trial_calc["time_diff"].abs() > .25
-num_trials = trial_calc["new_trial"].sum() + 1
-print(num_trials, " total trials")
-"""
 
 #print(data["label"].unique())
 
