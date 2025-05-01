@@ -3082,7 +3082,7 @@ plot_forward_feature_importance_reformatted(feat_importance_raw_scores, window_s
 plot_roc(self_report_foldwise_results, "Self Report", window_size, model_names, mw_color, sr_color, mw2_color)
 plot_roc(MW_onset_foldwise_results, "MW Onset", window_size, model_names, mw_color, sr_color, mw2_color)
 plot_roc(MW_onset_2_foldwise_results, f"MW Onset {mw2_target}", window_size, model_names, mw_color, sr_color, mw2_color)
-#%%
+
 # calculate and plot foldwise auroc
 if no_mw2_flag == False:
     plot_foldwise_auroc_histogram(MW_onset_foldwise_results, self_report_foldwise_results,
