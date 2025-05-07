@@ -2125,7 +2125,7 @@ def plot_foldwise_auroc_subplots(foldwise_results_mw, foldwise_results_sr, windo
         plt.savefig(f"onset_v_self_report/{window_size}s/foldwise_auroc_{model_name}_subplots.png")
         plt.close()
         
-def plot_foldwise_auroc_histogram(foldwise_results_mw, foldwise_results_sr, window_size,
+def plot_foldwise_auroc_histogram_subplots(foldwise_results_mw, foldwise_results_sr, window_size,
                         model_names, mw_color, sr_color, mw2_color,
                         mw2_target= None, foldwise_results_mw2 = None):
     """
@@ -2283,6 +2283,164 @@ def plot_foldwise_auroc_histogram(foldwise_results_mw, foldwise_results_sr, wind
                 
         plt.suptitle(f"AUROC Histograms with Stastical Significance Cutoff. Trained via LOGOCV. {model_name}, {window_size}s Window")
         plt.tight_layout()
+        plt.savefig(f"onset_v_self_report/{window_size}s/foldwise_auroc_{model_name}_histogram_subplots.png")
+        plt.close()
+        
+def plot_foldwise_auroc_histogram(foldwise_results_mw, foldwise_results_sr, window_size,
+                        model_names, mw_color, sr_color, mw2_color,
+                        mw_p_values, sr_p_values, mw2_p_values = None, mw2_target= None,
+                        foldwise_results_mw2 = None):
+    """
+    Plots a histogram of auroc for each fold of LOGOCV, representing how many
+    scores were significantly above chance as determined through permutation
+    tests. Results for all classifiers are represented in one histogram instead
+    of being organized into subplots and a global threshold for statistical
+    significance AUROC cutoff is found instead of classifier-specific thresholds.
+
+    p_values are accepted as parameters for this function instead of calling the p_values
+    function to support making changes to the plot more quickly.
+    
+    Accepts:
+    -------
+    foldwise_resullts_mw : List.
+        List of dictionaries, there is one listitem/ dictionary for each LOGOCV
+        fold during LOGOCV for the mind wandering classifier. Each dictionary 
+        has two keys, the model name (usually Logistic Regression)
+        and "test_subject". The model name key holds another dictionary of size two,
+        where keys are "true_labels" and "y_scores". As the names imply, these
+        hold true labels and y_scores for the LOGOCV fold represented by this
+        top-level list entry. "test_subject" holds the subject id for the subject
+        that the classifiers were tested on for this fold (since we are doing 
+        LOGOCV over subjects, there's one "test subject" for each fold).
+    foldwise_results_sr: List
+        The same list of dictionaries as seen in foldwise_results_mw, but holding
+        results from LOGOCV for the self report classifier.
+    window_size: Int
+        The size of the window used for data. 2 or 5. Used in plot title and save 
+        path.
+    model_names: List.
+        A list of strings representing the models that we are plotting ROC curves
+        for. Typically this will just be Logistic Regression, but we can add to this
+        to plot multiple ROC curves at once if training multiple model types.
+    mw_color : String, matplotlib CSS color name.
+        The color to use for data related to mind wandering in this plot.
+    sr_color : String, matplotlib CSS color name.
+        The color to use for data related to self report in this plot.
+    mw2_color : String, matplotlib CSS color name.
+        The color to use for data related to the second mind wandering classifier
+        in this plot. The second mind wandering classifier refers to the classifier
+        trained on mw_onset events in windows centered at relative times later than time 0. 
+    mw_p_values : 
+    sr_p_values : 
+    mw2_p_values : 
+    mw2_target: Float.
+        The center of the windows used for training data for the mw2 classifier if present.
+    foldwise_results_mw2: List.
+        The same list of dictionaries as seen in foldwise_results_mw and foldwise_results_sr,
+        but holding results from LOGOCV for the mw2 classifier.
+        
+    Returns
+    -------
+    None.
+    
+    """
+    all_results = {}
+    
+    # conditionally add mw2 to all results - must be first so its ordered first
+    mw2_label = f"MW Onset {mw2_target}"
+    if foldwise_results_mw2 is not None:
+        all_results[mw2_label] = foldwise_results_mw2
+        
+    # now add the other two 
+    all_results["MW Onset"] = foldwise_results_mw
+
+    all_results["Self Report"] = foldwise_results_sr
+
+    # get all aurocs and p values (for each fold)
+    for model_name in model_names: # new figure for each model (realistically there will probably only be one- logistic regression)
+        if model_name == "test_subject":
+            continue # skip this key if its not a model name
+        # collect all aurocs and p-values
+        classifier_data = {}
+        combined_aurocs = []
+        combined_p_values = []
+    
+        for classifier_type, results in all_results.items():
+            aurocs = []
+            p_values = []
+            # process each fold
+            for result_idx, fold in enumerate(results):
+                y_scores = fold[model_name]["y_scores"]
+                true_labels = fold[model_name]["true_labels"]
+                
+                # grab the p value for this result (dependent on model name, idx, and classifier type)
+                if classifier_type == "MW Onset":
+                    p_value = mw_p_values[model_name][result_idx]
+                elif classifier_type == "Self Report":
+                    p_value = sr_p_values[model_name][result_idx]
+                elif classifier_type == f"MW Onset {mw2_target}":
+                    p_value = mw2_p_values[model_name][result_idx]
+                    
+                # compute auroc from true labels and y scores
+                # nan if only one result type
+                if len(np.unique(true_labels)) < 2:
+                    auroc = np.nan
+                else:
+                    auroc = roc_auc_score(true_labels, y_scores)
+                    
+                # add to lists
+                aurocs.append(auroc)
+                p_values.append(p_value)
+                
+                combined_aurocs.append(auroc)
+                combined_p_values.append(p_value)
+            # add this folds data to the dictionary under this classifiers key
+            classifier_data[classifier_type] = {
+                "aurocs" : np.array(aurocs)
+                }
+        # sort aurocs (and p vals)
+        combined_aurocs = np.array(combined_aurocs)
+        combined_p_values = np.array(combined_p_values)
+        
+        sorted_idx = np.argsort(combined_aurocs)
+        sorted_aurocs = combined_aurocs[sorted_idx]
+        sorted_p_values = combined_p_values[sorted_idx]
+        
+        # determine global significance threshold
+        # p vals and aurocs are both sorted by descending auroc
+        # so, find the auroc index for which all later p vals
+        # are < .05, thats the threshold.
+        threshold = None
+        for i in range(len(sorted_aurocs)):
+            if np.all(sorted_p_values[i:] < .05):
+                threshold = sorted_aurocs[i]
+                break
+            
+        # plot 
+        plt.figure(figsize=(20,15))
+        bins = np.linspace(min(combined_aurocs), max(combined_aurocs), 20)
+        
+        for classifier_type, data in classifier_data.items():
+            # set color depending on classifier type
+            if classifier_type == "MW Onset":
+                color = mw_color
+            elif classifier_type == "Self Report":
+                color = sr_color
+            elif classifier_type == f"MW Onset {mw2_target}":
+                color = mw2_color
+                
+            plt.hist(data["aurocs"], bins=bins, alpha=.6, label=classifier_type, color=color)
+            
+        if threshold is not None:
+            plt.axvline(threshold, color="black", linestyle="--",
+                        label = f"All AUROC >= {threshold:.2f}\nare significantly greater than chance\n(p < 0.05)")
+    
+        plt.xlabel("AUROC")
+        plt.ylabel("Number of Test Subjects")
+        plt.title(f"AUROC Histogram with Stastical Significance Cutoff. Trained via LOGOCV. {model_name}, {window_size}s Window")
+        plt.tight_layout()
+        plt.grid(True)
+        plt.legend()
         plt.savefig(f"onset_v_self_report/{window_size}s/foldwise_auroc_{model_name}_histogram.png")
         plt.close()
 
@@ -3083,13 +3241,24 @@ plot_roc(self_report_foldwise_results, "Self Report", window_size, model_names, 
 plot_roc(MW_onset_foldwise_results, "MW Onset", window_size, model_names, mw_color, sr_color, mw2_color)
 plot_roc(MW_onset_2_foldwise_results, f"MW Onset {mw2_target}", window_size, model_names, mw_color, sr_color, mw2_color)
 
-# calculate and plot foldwise auroc
+# calculate p values and plot foldwise auroc hist
+if no_mw2_flag == False:
+    print("Performing foldwise permutation tests for MW2")
+    mw2_p_values = get_p_values(MW_onset_2_foldwise_results)
+    
+print("Performing foldwise permutation tests for MW")
+mw_p_values = get_p_values(MW_onset_foldwise_results)
+
+print("Performing foldwise permutation tests for SR")
+sr_p_values = get_p_values(self_report_foldwise_results)
+
+
 if no_mw2_flag == False:
     plot_foldwise_auroc_histogram(MW_onset_foldwise_results, self_report_foldwise_results,
                         window_size, model_names, mw_color, sr_color, mw2_color,
-                        mw2_target, MW_onset_2_foldwise_results)
+                        mw_p_values, sr_p_values, mw2_p_values, mw2_target, MW_onset_2_foldwise_results)
 else:
     plot_foldwise_auroc_histogram(MW_onset_foldwise_results, self_report_foldwise_results,
-                        window_size, model_names, mw_color, sr_color, mw2_color)
-
+                        window_size, model_names, mw_color, sr_color, mw2_color,
+                        mw_p_values, sr_p_values)
 
